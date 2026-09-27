@@ -148,6 +148,7 @@
     "24 hours ago": "24 小时前",
     "29 Days": "29 天",
     "2xx, 504 and 524 are always excluded.": "2xx、504、524 始终排除。",
+    "2xx is always excluded. 504/524 follow the configured ranges.": "2xx 始终排除；504/524 按上面配置的区间执行（本站已允许其重试）。",
     "3. Enter your Gotify server URL and token above": "3. 在上方输入您的 Gotify 服务器 URL 和令牌",
     "3. Review mappings": "3. 确认映射结果",
     "30 Days": "30 天",

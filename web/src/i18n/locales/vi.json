@@ -148,6 +148,7 @@
     "24 hours ago": "24 giờ trước",
     "29 Days": "29 ngày",
     "2xx, 504 and 524 are always excluded.": "2xx, 504 và 524 luôn bị loại trừ.",
+    "2xx is always excluded. 504/524 follow the configured ranges.": "2xx luôn bị loại trừ; 504/524 theo khoảng đã cấu hình (ở đây cho phép thử lại).",
     "3. Enter your Gotify server URL and token above": "3. Nhập URL máy chủ Gotify và mã thông báo của bạn ở trên",
     "3. Review mappings": "3. Kiểm tra ánh xạ",
     "30 Days": "30 ngày",

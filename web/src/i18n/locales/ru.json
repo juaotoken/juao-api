@@ -148,6 +148,7 @@
     "24 hours ago": "24 часа назад",
     "29 Days": "29 дней",
     "2xx, 504 and 524 are always excluded.": "2xx, 504 и 524 всегда исключены.",
+    "2xx is always excluded. 504/524 follow the configured ranges.": "2xx всегда исключены; 504/524 следуют настроенным диапазонам (повтор здесь разрешён).",
     "3. Enter your Gotify server URL and token above": "3. Введите URL вашего сервера Gotify и токен выше",
     "3. Review mappings": "3. Проверьте сопоставления",
     "30 Days": "30 дней",
