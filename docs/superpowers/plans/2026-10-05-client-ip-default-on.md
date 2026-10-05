@@ -31,10 +31,18 @@
 | `web/src/features/security/components/__tests__/privacy-card.test.tsx` | 前端开关回归测试 | 修改 |
 | `docs/superpowers/plans/2026-10-05-client-ip-default-on.md` | 本计划 | 新建 |
 
-**保持不变（明确不改）：**
+**明确不改（约定，不是延后）：** 本次改的「IP」特指**客户端 IP**，覆盖范围只到
+消费日志（type 2）与错误日志（type 5）。充值、系统、退款、管理日志都不记录客户端 IP。
+
 - `model/audit_log.go:79`、`controller/audit.go`、`controller/token.go` —— 审计/登录日志已经无条件记录 IP，无需改动。
 - `controller/user_quota.go:81` 那条管理员调额度日志 —— `controller/user_manage_test.go:261` 明确断言「recipient logs must not disclose the administrator IP」，属于既有隐私约束，维持不记。
-- `model.RecordLog` / `model.RecordTaskBillingLog` 的调用链（充值、系统、退款日志）—— 这些路径没有 `gin.Context`，本次不引入透传。
+- `model.RecordLog` / `model.RecordTaskBillingLog` 的调用链（充值、系统、退款日志）—— **不引入 `gin.Context` 透传，不加客户端 IP 字段**。这些日志按设计不含客户端 IP。
+
+> ⚠️ **一处容易混淆的既有行为，不要顺手删**：充值日志（`model/topup.go`）当前的
+> `RecordTopupLog(..., callerIp, ...)` 里那个 `callerIp` 是**支付平台回调方的 IP**
+> （来源 `controller/topup_stripe.go:191` 的 `c.ClientIP()`，写入 `log.Ip` 与
+> `other.caller_ip`），用途是对账与支付取证，前端后台还会展示「Callback Caller IP」。
+> 它跟本次的「用户客户端 IP 默认记录」是两回事 —— 保持原样，不在本次改动范围内。
 
 ---
 
@@ -263,6 +271,7 @@ Expected: 编译失败或 FAIL —— `cannot use &disabled (value of type *bool
 ```go
 // shouldRecordClientIp 决定消费/错误日志是否落客户端 IP。
 // 站点默认是记录：用户从未表态（设置为 nil）时记，只有显式关闭才不记。
+// 仅消费日志与错误日志走这条判定；充值/系统/退款日志按设计不记 IP。
 func shouldRecordClientIp(userId int) bool {
 	settingMap, err := GetUserSetting(userId, false)
 	if err != nil {
@@ -648,6 +657,8 @@ git add docs/superpowers/plans/2026-10-05-client-ip-default-on.md
 git commit -m "docs: 客户端 IP 记录默认开启的实施计划"
 ```
 
+（若该文档已在写作阶段提交，此步跳过即可 —— 检查 `git log --oneline -5` 有无对应提交。）
+
 - [ ] **Step 5: 部署（node1 号池站 18082）**
 
 版本串用 `juao_dev_base40-$(git rev-parse --short HEAD)`。构建必须在**干净 worktree** 里做，否则 `vcs.modified=true` 且 `builds/`、`juao-api/` 等未跟踪文件会混进产物。
@@ -743,7 +754,10 @@ ssh -p 52200 davidshan@121.41.73.50 \
 
 **Spec coverage：**
 - 「未设置即为开」→ Task 1（契约）+ Task 2（判定）+ Task 4（前端展示）✅
-- 「全部日志都要 IP」经澄清收敛为「只改消费/错误日志的默认开启」→ Task 2；审计/登录日志经核实本就无条件记录，已在 File Structure 的「保持不变」里写明不改的理由 ✅
+- IP 记录范围严格限定为消费日志（type 2）与错误日志（type 5）→ Task 2 只改这两处调用；
+  充值/系统/退款/管理日志的调用链（`model.RecordLog`、`model.RecordTaskBillingLog`、
+  `model/redemption.go`、`model/subscription.go`、`model/topup.go`、`controller/checkin.go`）
+  一律不动，已在 File Structure 的「明确不改」里写明 ✅
 - 「已显式关闭的用户保持关闭」→ Task 2 的 `TestRecordConsumeLogSkipsClientIpWhenExplicitlyDisabled`、Task 3 的 `TestUpdateUserSettingPreservesStoredRecordIpLog` ✅
 - 「不改动读-改-写之外的路径」→ 保持 `model/user.go:796`、`:822` 与 `controller/subscription.go:93` 三处 `GetSetting()`→改字段→`UpdateUserSetting` 的既有模式不动 ✅
 
