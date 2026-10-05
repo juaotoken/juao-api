@@ -43,7 +43,9 @@ export function normalizeUserSettings(
     gotify_priority: parsed.gotify_priority ?? 5,
     accept_unset_model_ratio_model:
       parsed.accept_unset_model_ratio_model || false,
-    record_ip_log: parsed.record_ip_log || false,
+    // 站点默认开启 IP 记录：只有用户显式关过才是 false，
+    // 未表态（undefined）时按开启处理。参见 relaykit/dto/user_settings.go。
+    record_ip_log: parsed.record_ip_log ?? true,
     upstream_model_update_notify_enabled:
       parsed.upstream_model_update_notify_enabled || false,
   }

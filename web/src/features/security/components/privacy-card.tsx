@@ -39,12 +39,14 @@ type PrivacyCardProps = {
 
 export function PrivacyCard(props: PrivacyCardProps) {
   const { t } = useTranslation()
-  const [recordIpLog, setRecordIpLog] = useState(() =>
-    Boolean(parseUserSettings(props.profile.setting).record_ip_log)
+  // 后端未表态（字段缺失）= 站点默认开启。
+  // 注意不能用 Boolean(...)：undefined 会被压成 false，界面就与后端不一致了。
+  const [recordIpLog, setRecordIpLog] = useState(
+    () => parseUserSettings(props.profile.setting).record_ip_log ?? true
   )
   useEffect(() => {
     setRecordIpLog(
-      Boolean(parseUserSettings(props.profile.setting).record_ip_log)
+      parseUserSettings(props.profile.setting).record_ip_log ?? true
     )
   }, [props.profile.setting])
 

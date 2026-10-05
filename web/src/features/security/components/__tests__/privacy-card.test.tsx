@@ -49,14 +49,14 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-function renderPrivacy() {
+function renderPrivacy(overrides: Partial<UserProfile> = {}) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   const onUpdate = vi.fn()
   const rendered = render(
     <QueryClientProvider client={client}>
-      <PrivacyCard profile={profile} onUpdate={onUpdate} />
+      <PrivacyCard profile={{ ...profile, ...overrides }} onUpdate={onUpdate} />
       <Toaster />
     </QueryClientProvider>
   )
@@ -113,6 +113,20 @@ describe('privacy settings', () => {
     await user.click(screen.getByRole('button', { name: 'Save Settings' }))
     expect(await screen.findByText('Failed to update settings')).toBeVisible()
     expect(onUpdate).not.toHaveBeenCalled()
+    expect(
+      screen.getByRole('switch', { name: 'Record IP Address' })
+    ).not.toBeChecked()
+  })
+
+  it('never-configured users see the IP switch on by default', () => {
+    renderPrivacy({ setting: JSON.stringify({ notify_type: 'email' }) })
+    expect(
+      screen.getByRole('switch', { name: 'Record IP Address' })
+    ).toBeChecked()
+  })
+
+  it('explicitly disabled users still see the IP switch off', () => {
+    renderPrivacy({ setting: JSON.stringify({ record_ip_log: false }) })
     expect(
       screen.getByRole('switch', { name: 'Record IP Address' })
     ).not.toBeChecked()
