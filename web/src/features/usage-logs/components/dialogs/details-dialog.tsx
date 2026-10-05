@@ -49,9 +49,11 @@ import {
   UserCog,
   Info,
   LogIn,
+  FileJson,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { CopyButton } from '@/components/copy-button'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge, type StatusBadgeProps } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -503,6 +505,12 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const showAdminIp =
     !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
   const adminInfo = other?.admin_info
+  const rawRequest = adminInfo?.raw_request
+  // method 与 url 合成一行展示；两者都缺时整行不渲染，
+  // 避免在排查页面上留一个读起来像「记了但内容为空」的空值格。
+  const rawRequestTarget = rawRequest
+    ? `${rawRequest.method ?? ''} ${rawRequest.url ?? ''}`.trim()
+    : ''
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -788,6 +796,67 @@ export function DetailsDialog(props: DetailsDialogProps) {
             </div>
           </DetailSection>
         )}
+
+        {/* Raw request snapshot (admin only, error logs) */}
+        {props.isAdmin && rawRequest ? (
+          <DetailSection
+            label={t('Raw Request')}
+            icon={<FileJson className='size-4' />}
+          >
+            {rawRequestTarget ? (
+              <DetailRow label={t('Method')} value={rawRequestTarget} mono />
+            ) : null}
+            {rawRequest.headers &&
+            Object.keys(rawRequest.headers).length > 0 ? (
+              <div className='min-w-0 space-y-1'>
+                <div className='flex items-center justify-between gap-2'>
+                  <span className='text-muted-foreground text-xs'>
+                    {t('Request Headers')}
+                  </span>
+                  <CopyButton
+                    size='sm'
+                    value={Object.entries(rawRequest.headers)
+                      .map(([key, value]) => `${key}: ${value}`)
+                      .join('\n')}
+                    tooltip={t('Copy to clipboard')}
+                  />
+                </div>
+                {Object.entries(rawRequest.headers).map(([key, value]) => (
+                  <div
+                    key={key}
+                    className='font-mono text-xs wrap-break-word break-all'
+                  >
+                    {key}: {value}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {rawRequest.body ? (
+              <div className='min-w-0 space-y-1'>
+                <div className='flex items-center justify-between gap-2'>
+                  <span className='text-muted-foreground text-xs'>
+                    {t('Request Body')}
+                  </span>
+                  <CopyButton
+                    size='sm'
+                    value={rawRequest.body}
+                    tooltip={t('Copy to clipboard')}
+                  />
+                </div>
+                {rawRequest.body_truncated ? (
+                  <p className='text-muted-foreground text-xs'>
+                    {t('Body truncated, original size: {{bytes}} bytes', {
+                      bytes: rawRequest.body_bytes ?? 0,
+                    })}
+                  </p>
+                ) : null}
+                <pre className='bg-muted/50 max-h-64 overflow-auto rounded-md border p-2 text-xs wrap-break-word whitespace-pre-wrap'>
+                  {rawRequest.body}
+                </pre>
+              </div>
+            ) : null}
+          </DetailSection>
+        ) : null}
 
         {/* Quota saturation marker (admin only) */}
         {props.isAdmin && adminInfo?.request_policy?.length ? (

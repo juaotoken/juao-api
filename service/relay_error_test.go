@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -106,7 +108,7 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	t.Cleanup(func() { notifyLimitStore.Delete(notifyKey) })
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	apiErr := types.NewErrorWithStatusCode(errors.New("upstream https://private.example.com/path?token=review-token api_key:review-secret"), types.ErrorCodeChannelNoAvailableKey, http.StatusUnauthorized)
-	ProcessChannelError(c, types.ChannelError{ChannelId: channel.Id, ChannelName: channel.Name, AutoBan: true}, apiErr, nil)
+	ProcessChannelError(c, types.ChannelError{ChannelId: channel.Id, ChannelName: channel.Name, AutoBan: true}, apiErr, nil, true)
 	var notification WebhookPayload
 	select {
 	case payload := <-notifications:
@@ -213,4 +215,283 @@ func TestRequestPolicyEventsReachLogAdminInfo(t *testing.T) {
 	other := model.NewLogOther()
 	AppendRelayLogAdminInfo(untouched, nil, other)
 	assert.NotContains(t, other.Snapshot()["admin_info"], "request_policy", "requests without decisions do not carry an empty record")
+}
+
+// setupRawRequestLogTestDB 准备错误日志测试用的双库上下文。
+// ProcessChannelError 会读 model.DB 取用户设置（决定是否记 IP），写日志走 model.LOG_DB，
+// 两者都要可用。返回的 database 同时被赋给 DB 和 LOG_DB。
+func setupRawRequestLogTestDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := database.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, database.AutoMigrate(&model.User{}, &model.Log{}))
+	previousDB, previousLogDB := model.DB, model.LOG_DB
+	previousMainType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()
+	model.DB, model.LOG_DB = database, database
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
+	t.Cleanup(func() {
+		model.DB, model.LOG_DB = previousDB, previousLogDB
+		common.SetDatabaseTypes(previousMainType, previousLogType)
+		require.NoError(t, sqlDB.Close())
+	})
+	return database
+}
+
+// newRawRequestChannelErrorContext 构造一个带 BodyStorage 的错误日志上下文。
+func newRawRequestChannelErrorContext(t *testing.T, requestURL string, body string) *gin.Context {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, requestURL, strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+	c.Request.Header.Set("User-Agent", "OpenAI/Python 1.52.0")
+	c.Request.Header.Set("Authorization", "Bearer sk-should-not-be-stored")
+	c.Set("id", 1)
+	c.Set("token_name", "token")
+	c.Set("original_model", "glm-5.3")
+	c.Set("group", "default")
+	c.Set("use_channel", []string{"150"})
+	_, err := common.GetRequestBody(c)
+	require.NoError(t, err)
+	return c
+}
+
+// storedErrorLogAdminInfo 取出唯一一条错误日志的 admin_info。
+func storedErrorLogAdminInfo(t *testing.T, database *gorm.DB) map[string]any {
+	t.Helper()
+	var stored model.Log
+	require.NoError(t, database.Where("type = ?", model.LogTypeError).First(&stored).Error)
+	other, err := common.StrToMap(stored.Other)
+	require.NoError(t, err)
+	adminInfo, ok := other["admin_info"].(map[string]any)
+	require.True(t, ok, "the error log must carry an admin_info map")
+	return adminInfo
+}
+
+func TestProcessChannelErrorRecordsRawRequestOnFinalFailure(t *testing.T) {
+	previousErrorLog, previousRawRequest := constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled
+	previousAutoDisable := common.AutomaticDisableChannelEnabled
+	constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = true, true
+	common.AutomaticDisableChannelEnabled = false
+	t.Cleanup(func() {
+		constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = previousErrorLog, previousRawRequest
+		common.AutomaticDisableChannelEnabled = previousAutoDisable
+	})
+	database := setupRawRequestLogTestDB(t)
+
+	body := `{"model":"glm-5.3","messages":[{"role":"user","content":"真实报错的请求"}]}`
+	c := newRawRequestChannelErrorContext(t, "/v1/chat/completions", body)
+	apiErr := types.NewOpenAIError(errors.New("bad request"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
+
+	ProcessChannelError(c, types.ChannelError{ChannelId: 150, ChannelName: "glm"}, apiErr,
+		&relaycommon.RelayInfo{}, true)
+
+	var stored model.Log
+	require.NoError(t, database.Where("type = ?", model.LogTypeError).First(&stored).Error)
+	adminInfo := storedErrorLogAdminInfo(t, database)
+	rawRequest, ok := adminInfo["raw_request"].(map[string]any)
+	require.True(t, ok, "final failure must carry the raw request snapshot")
+	assert.Equal(t, "POST", rawRequest["method"])
+	assert.Equal(t, "/v1/chat/completions", rawRequest["url"])
+	assert.Equal(t, body, rawRequest["body"])
+	assert.Equal(t, "application/json", rawRequest["body_content_type"])
+	assert.Equal(t, float64(1), rawRequest["attempts"])
+	headers, ok := rawRequest["headers"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "OpenAI/Python 1.52.0", headers["User-Agent"])
+	assert.Equal(t, "***", headers["Authorization"], "the client credential must never reach the log database")
+	assert.NotContains(t, stored.Other, "sk-should-not-be-stored")
+}
+
+func TestProcessChannelErrorSkipsRawRequestWhileRetrying(t *testing.T) {
+	previousErrorLog, previousRawRequest := constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled
+	constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = true, true
+	t.Cleanup(func() {
+		constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = previousErrorLog, previousRawRequest
+	})
+	database := setupRawRequestLogTestDB(t)
+
+	c := newRawRequestChannelErrorContext(t, "/v1/chat/completions", `{"model":"glm-5.3"}`)
+	apiErr := types.NewOpenAIError(errors.New("rate limited"), types.ErrorCodeBadResponseStatusCode, http.StatusTooManyRequests)
+
+	ProcessChannelError(c, types.ChannelError{ChannelId: 150, ChannelName: "glm"}, apiErr,
+		&relaycommon.RelayInfo{}, false)
+
+	assert.NotContains(t, storedErrorLogAdminInfo(t, database), "raw_request",
+		"an intermediate retry attempt must not carry the raw request")
+}
+
+func TestProcessChannelErrorSkipsRawRequestWhenSwitchDisabled(t *testing.T) {
+	previousErrorLog, previousRawRequest := constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled
+	constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = true, false
+	t.Cleanup(func() {
+		constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = previousErrorLog, previousRawRequest
+	})
+	database := setupRawRequestLogTestDB(t)
+
+	c := newRawRequestChannelErrorContext(t, "/v1/chat/completions", `{"model":"glm-5.3"}`)
+	apiErr := types.NewOpenAIError(errors.New("bad request"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
+
+	ProcessChannelError(c, types.ChannelError{ChannelId: 150, ChannelName: "glm"}, apiErr,
+		&relaycommon.RelayInfo{}, true)
+
+	assert.NotContains(t, storedErrorLogAdminInfo(t, database), "raw_request",
+		"the switch must be able to turn the snapshot off")
+}
+
+func TestProcessChannelErrorSkipsRawRequestForChannelTestProbe(t *testing.T) {
+	previousErrorLog, previousRawRequest := constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled
+	constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = true, true
+	t.Cleanup(func() {
+		constant.ErrorLogEnabled, common.ErrorLogRawRequestEnabled = previousErrorLog, previousRawRequest
+	})
+	database := setupRawRequestLogTestDB(t)
+
+	c := newRawRequestChannelErrorContext(t, "/v1/chat/completions", `{"model":"glm-5.3"}`)
+	apiErr := types.NewOpenAIError(errors.New("bad request"), types.ErrorCodeBadResponseStatusCode, http.StatusBadRequest)
+
+	// 渠道测试探针不传 relayInfo：body 是程序合成的，不是用户请求。
+	ProcessChannelError(c, types.ChannelError{ChannelId: 150, ChannelName: "glm"}, apiErr, nil, true)
+
+	assert.NotContains(t, storedErrorLogAdminInfo(t, database), "raw_request",
+		"a channel test probe is not a user request")
+}
+
+func TestIsFinalAttempt(t *testing.T) {
+	// RetryTimes 是包级变量（生产为 2，测试默认 0），此处固定成已知值，
+	// 让「最后一次尝试 = attempt >= common.RetryTimes」这条语义可确定地断言。
+	previousRetryTimes := common.RetryTimes
+	common.RetryTimes = 2
+	t.Cleanup(func() { common.RetryTimes = previousRetryTimes })
+
+	upstream := func(status int) *types.NewAPIError {
+		return types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, status)
+	}
+	for _, tc := range []struct {
+		name    string
+		err     *types.NewAPIError
+		retries int
+		attempt int
+		want    bool
+	}{
+		{
+			name:    "upstream 429 with budget remaining keeps retrying",
+			err:     upstream(http.StatusTooManyRequests),
+			retries: common.RetryTimes,
+			attempt: 0,
+			want:    false,
+		},
+		{
+			name:    "upstream 400 is final even with budget remaining",
+			err:     upstream(http.StatusBadRequest),
+			retries: common.RetryTimes,
+			attempt: 0,
+			want:    true,
+		},
+		{
+			// 回归：DecideRelayRetry 把 IsChannelError 排在预算检查之前，
+			// channel:* 在预算耗尽时仍返回 retry，必须靠 attempt 判定为最终失败。
+			name:    "channel no_available_key on the last attempt is final",
+			err:     types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey),
+			retries: 0,
+			attempt: common.RetryTimes,
+			want:    true,
+		},
+		{
+			name:    "channel model_mapped_error on the last attempt is final",
+			err:     types.NewError(errors.New("no mapping"), types.ErrorCodeChannelModelMappedError),
+			retries: 0,
+			attempt: common.RetryTimes,
+			want:    true,
+		},
+		{
+			name:    "channel error with budget remaining is not final",
+			err:     types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey),
+			retries: common.RetryTimes,
+			attempt: 0,
+			want:    false,
+		},
+		{
+			name:    "nil error stops at the first attempt",
+			attempt: 0,
+			want:    true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			decision := DecideRelayRetry(c, tc.err, tc.retries)
+			assert.Equal(t, tc.want, IsFinalAttempt(decision, tc.attempt))
+		})
+	}
+}
+
+func TestClaimRawRequestSnapshot(t *testing.T) {
+	// 与 TestIsFinalAttempt 同理，固定 RetryTimes 才能确定地断言 attempt >= RetryTimes 的分支。
+	previousRetryTimes := common.RetryTimes
+	common.RetryTimes = 2
+	t.Cleanup(func() { common.RetryTimes = previousRetryTimes })
+
+	upstream := func(status int) *types.NewAPIError {
+		return types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, status)
+	}
+	channelErr := func() *types.NewAPIError {
+		return types.NewError(errors.New("no key"), types.ErrorCodeChannelNoAvailableKey)
+	}
+	// rawRequestStep 是在同一个 gin context 上的一次判定：err/retries 用来现场推导
+	// decision，避免把重试判定硬编码成字符串而与 DecideRelayRetry 脱节。
+	type rawRequestStep struct {
+		err     *types.NewAPIError
+		retries int
+		attempt int
+		want    bool
+	}
+	for _, tc := range []struct {
+		name string
+		// requests 中每个元素是一条独立请求（各自一个 gin context）上的判定序列。
+		requests [][]rawRequestStep
+	}{
+		{
+			name:     "第一次最终失败写入并占用闸门",
+			requests: [][]rawRequestStep{{{err: upstream(http.StatusBadRequest), retries: common.RetryTimes, attempt: 0, want: true}}},
+		},
+		{
+			// 回归：cross_group_retry 把计数器重置为 0，同一请求会多次满足
+			// attempt >= RetryTimes，第二次必须被闸门挡住。
+			name: "同一请求的第二次最终失败被抑制",
+			requests: [][]rawRequestStep{{
+				{err: channelErr(), retries: 0, attempt: common.RetryTimes, want: true},
+				{err: channelErr(), retries: 0, attempt: common.RetryTimes, want: false},
+			}},
+		},
+		{
+			// 渠道测试探针在 controller/channel-test.go 里直接传 false（它另有
+			// relayInfo == nil 兜底），等价于「非最终尝试」：不写入，也不占用闸门。
+			name: "非最终尝试（含渠道测试探针）不写入且不占用闸门",
+			requests: [][]rawRequestStep{{
+				{err: upstream(http.StatusTooManyRequests), retries: common.RetryTimes, attempt: 0, want: false},
+				{err: upstream(http.StatusTooManyRequests), retries: 0, attempt: common.RetryTimes, want: true},
+			}},
+		},
+		{
+			name: "不同请求各自独立占用闸门",
+			requests: [][]rawRequestStep{
+				{{err: channelErr(), retries: 0, attempt: common.RetryTimes, want: true}},
+				{{err: channelErr(), retries: 0, attempt: common.RetryTimes, want: true}},
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for requestIndex, steps := range tc.requests {
+				c, _ := gin.CreateTestContext(httptest.NewRecorder())
+				for stepIndex, step := range steps {
+					decision := DecideRelayRetry(c, step.err, step.retries)
+					assert.Equal(t, step.want, ClaimRawRequestSnapshot(c, decision, step.attempt),
+						"request %d step %d", requestIndex, stepIndex)
+				}
+			}
+		})
+	}
 }

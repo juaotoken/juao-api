@@ -74,3 +74,29 @@ export function parseTaskResult() { return {}; }
 	assert.False(t, ok)
 	assert.Equal(t, []string{key}, jsplugin.DefaultRegistry.Snapshot().DisabledFactory)
 }
+
+func TestErrorLogRawRequestEnabledOptionUpdatesLiveValue(t *testing.T) {
+	originalEnabled := common.ErrorLogRawRequestEnabled
+	originalMap := common.OptionMap
+	common.OptionMap = map[string]string{}
+	t.Cleanup(func() {
+		common.ErrorLogRawRequestEnabled = originalEnabled
+		common.OptionMap = originalMap
+	})
+
+	// 站点默认必须为开：InitOptionMap 从变量播种，DB 里没有该 key 时，播种值就是最终生效值
+	// （管理端 GetOptions 也靠这行播种才能看到这个开关）。先显式置 true 排除其他测试的遗留状态，
+	// 再断言播种结果——只读进程全局变量是同义反复，覆盖不到播种行本身。
+	common.ErrorLogRawRequestEnabled = true
+	InitOptionMap()
+	assert.True(t, common.ErrorLogRawRequestEnabled, "InitOptionMap 不应改变开关的运行时值")
+	assert.Equal(t, "true", common.OptionMap["ErrorLogRawRequestEnabled"])
+
+	require.NoError(t, updateOptionMap("ErrorLogRawRequestEnabled", "false"))
+	assert.False(t, common.ErrorLogRawRequestEnabled)
+	assert.Equal(t, "false", common.OptionMap["ErrorLogRawRequestEnabled"])
+
+	require.NoError(t, updateOptionMap("ErrorLogRawRequestEnabled", "true"))
+	assert.True(t, common.ErrorLogRawRequestEnabled)
+	assert.Equal(t, "true", common.OptionMap["ErrorLogRawRequestEnabled"])
+}

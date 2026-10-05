@@ -48,8 +48,12 @@ type RequestPolicyState struct {
 	RuleName          string
 	Successful        bool
 	OutcomeRecorded   bool
-	mu                sync.Mutex
-	events            []PolicyEvent
+	// RawRequestLogged 保证同一条请求只写一次原始请求快照。
+	// 不能只看重试计数：cross_group_retry 会在切换分组时把计数器重置为 0
+	// （service/channel_select.go），一次请求因此可能多次出现 attempt == RetryTimes。
+	RawRequestLogged bool
+	mu               sync.Mutex
+	events           []PolicyEvent
 }
 
 func RequestPolicy(c *gin.Context) *RequestPolicyState {

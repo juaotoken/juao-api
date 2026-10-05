@@ -93,6 +93,11 @@ var MemoryCacheEnabled bool
 
 var LogConsumeEnabled = true
 
+// ErrorLogRawRequestEnabled 控制错误日志是否附带原始请求快照
+// （original body 前 1000 字符 + HTTP method / URL / 请求头）。
+// 站点默认开启：这是排查上游报错的唯一线索。
+var ErrorLogRawRequestEnabled = true
+
 var TLSInsecureSkipVerify bool
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 

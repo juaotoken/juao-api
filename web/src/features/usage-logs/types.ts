@@ -146,6 +146,21 @@ export interface LogOtherData {
     }
     // Reject / intercept reason (admin only)
     reject_reason?: string
+    // Snapshot of the client's original request, captured on upstream errors so
+    // admins can debug rejections the upstream error text does not explain.
+    // Every field is optional: old rows predate the feature and the backend
+    // omits empty fields.
+    raw_request?: {
+      method?: string
+      url?: string
+      headers?: Record<string, string>
+      headers_truncated?: boolean
+      body?: string
+      body_truncated?: boolean
+      body_bytes?: number
+      body_content_type?: string
+      attempts?: number
+    }
     task_plugin?: TaskPluginInfo
   }
   root_info?: {

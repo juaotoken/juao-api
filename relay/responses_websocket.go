@@ -318,7 +318,7 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				info.LastError = apiErr
 				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
-				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
+				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info, service.ClaimRawRequestSnapshot(c, decision, retry.GetRetry()))
 				if decision.Action == "retry" {
 					continue
 				}

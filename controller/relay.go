@@ -206,7 +206,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		decision := service.DecideRelayRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry())
 		service.RecordPolicyFailure(c, channel.Id, newAPIError, decision)
-		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo)
+		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, relayInfo, service.ClaimRawRequestSnapshot(c, decision, retryParam.GetRetry()))
 
 		if decision.Action != "retry" {
 			break
@@ -293,8 +293,8 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
-func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
-	service.ProcessChannelError(c, channelError, err, relayInfo)
+func processChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo, finalAttempt bool) {
+	service.ProcessChannelError(c, channelError, err, relayInfo, finalAttempt)
 }
 
 func RelayMidjourney(c *gin.Context) {
@@ -564,7 +564,8 @@ func executeTaskSubmissionWith(
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
 				taskAPIError,
-				relayInfo)
+				relayInfo,
+				service.ClaimRawRequestSnapshot(c, decision, retryParam.GetRetry()))
 		}
 
 		willRetry := decision.Action == "retry"

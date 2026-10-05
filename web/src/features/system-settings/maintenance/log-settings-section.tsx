@@ -85,12 +85,14 @@ import type { LogCleanupTask } from '../types'
 
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
+  ErrorLogRawRequestEnabled: z.boolean(),
 })
 
 type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
 
 type LogSettingsSectionProps = {
   defaultEnabled: boolean
+  rawRequestDefaultEnabled: boolean
 }
 
 type ServerLogInfo = {
@@ -146,6 +148,7 @@ function isActiveLogCleanupTask(task: LogCleanupTask | null) {
 
 export function LogSettingsSection({
   defaultEnabled,
+  rawRequestDefaultEnabled,
 }: LogSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -153,6 +156,7 @@ export function LogSettingsSection({
     resolver: zodResolver(logSettingsSchema),
     defaultValues: {
       LogConsumeEnabled: defaultEnabled,
+      ErrorLogRawRequestEnabled: rawRequestDefaultEnabled,
     },
   })
 
@@ -180,8 +184,11 @@ export function LogSettingsSection({
   }, [])
 
   useEffect(() => {
-    form.reset({ LogConsumeEnabled: defaultEnabled })
-  }, [defaultEnabled, form])
+    form.reset({
+      LogConsumeEnabled: defaultEnabled,
+      ErrorLogRawRequestEnabled: rawRequestDefaultEnabled,
+    })
+  }, [defaultEnabled, rawRequestDefaultEnabled, form])
 
   useEffect(() => {
     fetchServerLogInfo()
@@ -263,11 +270,16 @@ export function LogSettingsSection({
   }, [logCleanupActive, logCleanupTaskId, t])
 
   const onSubmit = async (values: LogSettingsFormValues) => {
-    if (values.LogConsumeEnabled === defaultEnabled) return
-    await updateOption.mutateAsync({
-      key: 'LogConsumeEnabled',
-      value: values.LogConsumeEnabled,
-    })
+    const defaults: LogSettingsFormValues = {
+      LogConsumeEnabled: defaultEnabled,
+      ErrorLogRawRequestEnabled: rawRequestDefaultEnabled,
+    }
+    const updates = Object.entries(values).filter(
+      ([key, value]) => value !== defaults[key as keyof LogSettingsFormValues]
+    )
+    for (const [key, value] of updates) {
+      await updateOption.mutateAsync({ key, value })
+    }
   }
 
   const handleRequestCleanLogs = () => {
@@ -359,6 +371,32 @@ export function LogSettingsSection({
                   <FormDescription>
                     {t(
                       'Track per-request consumption to power usage analytics. Keeping this on increases database writes.'
+                    )}
+                  </FormDescription>
+                </SettingsSwitchContent>
+                <FormControl>
+                  <Switch
+                    checked={field.value}
+                    onCheckedChange={field.onChange}
+                  />
+                </FormControl>
+                <FormMessage />
+              </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='ErrorLogRawRequestEnabled'
+            render={({ field }) => (
+              <SettingsSwitchItem>
+                <SettingsSwitchContent>
+                  <FormLabel>
+                    {t('Record raw request info in error logs')}
+                  </FormLabel>
+                  <FormDescription>
+                    {t(
+                      'Store the client request body (first 1000 characters) and HTTP headers on error logs so upstream rejections can be investigated. Visible to administrators only.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>
