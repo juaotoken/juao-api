@@ -1279,7 +1279,8 @@ type UpdateUserSettingRequest struct {
 	GotifyPriority                   int     `json:"gotify_priority,omitempty"`
 	UpstreamModelUpdateNotifyEnabled *bool   `json:"upstream_model_update_notify_enabled,omitempty"`
 	AcceptUnsetModelRatioModel       bool    `json:"accept_unset_model_ratio_model"`
-	RecordIpLog                      bool    `json:"record_ip_log"`
+	// 指针：nil 表示本次请求没有提交这个字段，应保留已存值而不是覆盖成 false。
+	RecordIpLog *bool `json:"record_ip_log"`
 }
 
 func UpdateUserSetting(c *gin.Context) {
@@ -1375,13 +1376,17 @@ func UpdateUserSetting(c *gin.Context) {
 		upstreamModelUpdateNotifyEnabled = *req.UpstreamModelUpdateNotifyEnabled
 	}
 
-	// 构建设置
+	// 构建设置。未在本次请求中提交的字段沿用已存值，
+	// 避免通知页/隐私卡互相把对方的设置冲掉。
 	settings := dto.UserSetting{
 		NotifyType:                       req.QuotaWarningType,
 		QuotaWarningThreshold:            req.QuotaWarningThreshold,
 		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
 		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
-		RecordIpLog:                      req.RecordIpLog,
+		RecordIpLog:                      existingSettings.RecordIpLog,
+	}
+	if req.RecordIpLog != nil {
+		settings.RecordIpLog = req.RecordIpLog
 	}
 
 	// 如果是webhook类型,添加webhook相关设置
