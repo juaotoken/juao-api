@@ -6785,6 +6785,7 @@
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} из {{total}} настроек были сохранены до сбоя. Проверьте оставшиеся настройки и повторите попытку."
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} из {{total}} настроек были сохранены до сбоя. Проверьте оставшиеся настройки и повторите попытку.",
+    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Записывает тело запроса клиента (первые 1000 символов) и HTTP-заголовки при первой неудачной попытке обращения к вышестоящему сервису, чтобы можно было разобрать отказы; повторные попытки не записываются. Видно только администраторам."
   }
 }

@@ -408,7 +408,7 @@ export function LogSettingsSection({
                   </FormLabel>
                   <FormDescription>
                     {t(
-                      'Store the client request body (first 1000 characters) and HTTP headers on error logs so upstream rejections can be investigated. Visible to administrators only.'
+                      'Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>

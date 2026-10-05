@@ -458,21 +458,28 @@ func TestClaimRawRequestSnapshot(t *testing.T) {
 			requests: [][]rawRequestStep{{{err: upstream(http.StatusBadRequest), retries: common.RetryTimes, attempt: 0, want: true}}},
 		},
 		{
+			// 2026-10-05 钜敖改：第一次渠道失败（decision=retry，非最终尝试）
+			// 就写入并占用闸门——「403 后重试成功、整链无痕」这类排查只能靠
+			// 第一次失败留下的 raw_request。
+			name:     "第一次失败（将重试）写入并占用闸门",
+			requests: [][]rawRequestStep{{{err: upstream(http.StatusForbidden), retries: common.RetryTimes, attempt: 0, want: true}}},
+		},
+		{
+			// 同一请求的后续失败——无论最终失败还是又一次将重试——都不再写入。
+			name: "第一次失败已写入，后续失败一律被闸门挡住",
+			requests: [][]rawRequestStep{{
+				{err: upstream(http.StatusForbidden), retries: common.RetryTimes, attempt: 0, want: true},
+				{err: upstream(http.StatusBadGateway), retries: common.RetryTimes - 1, attempt: 1, want: false},
+				{err: upstream(http.StatusBadRequest), retries: common.RetryTimes - 2, attempt: 2, want: false},
+			}},
+		},
+		{
 			// 回归：cross_group_retry 把计数器重置为 0，同一请求会多次满足
 			// attempt >= RetryTimes，第二次必须被闸门挡住。
 			name: "同一请求的第二次最终失败被抑制",
 			requests: [][]rawRequestStep{{
 				{err: channelErr(), retries: 0, attempt: common.RetryTimes, want: true},
 				{err: channelErr(), retries: 0, attempt: common.RetryTimes, want: false},
-			}},
-		},
-		{
-			// 渠道测试探针在 controller/channel-test.go 里直接传 false（它另有
-			// relayInfo == nil 兜底），等价于「非最终尝试」：不写入，也不占用闸门。
-			name: "非最终尝试（含渠道测试探针）不写入且不占用闸门",
-			requests: [][]rawRequestStep{{
-				{err: upstream(http.StatusTooManyRequests), retries: common.RetryTimes, attempt: 0, want: false},
-				{err: upstream(http.StatusTooManyRequests), retries: 0, attempt: common.RetryTimes, want: true},
 			}},
 		},
 		{

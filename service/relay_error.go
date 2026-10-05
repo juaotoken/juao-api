@@ -68,7 +68,9 @@ func ShouldRetryRelayError(c *gin.Context, openaiErr *types.NewAPIError, retryTi
 //
 // 另外，重试计数并非单调：cross_group_retry 在切换分组时会把计数器重置为 0
 // （service/channel_select.go），一次请求因此可能多次满足 attempt >= RetryTimes。
-// 需要「同一请求只采一次」的调用方请用 ClaimRawRequestSnapshot，不要直接用本函数。
+//
+// 自 2026-10-05 起仅用于「是否继续重试」类的展示语义；原始请求快照的
+// 时机改由 ClaimRawRequestSnapshot 直接判定（第一次失败即采集）。
 func IsFinalAttempt(decision PolicyDecision, attempt int) bool {
 	return decision.Action != "retry" || attempt >= common.RetryTimes
 }
@@ -78,14 +80,14 @@ func IsFinalAttempt(decision PolicyDecision, attempt int) bool {
 // 此后同一请求再调用一律返回 false。
 // 因此它是一个「判定并占位」的操作，不要用它做纯判断——探询会白白消耗名额。
 //
-// 与 IsFinalAttempt 的区别：切换分组会把重试计数器重置为 0
-// （service/channel_select.go 的 cross_group_retry 路径），一次请求因此可能
-// 多次满足 attempt >= RetryTimes。用请求级的 RequestPolicyState 做一次性闸门，
-// 保证同一请求只落一份 body。
+// 2026-10-05 钜敖改：**第一次渠道失败就采集**，不再等最终尝试。
+// 此前只有「最后一次尝试」才写入，于是「第一次 403 → 重试成功」这类链路
+// 整链无痕——错误日志在重试时机写出、而成功的那次尝试根本不写错误日志，
+// 排查时没有任何一份 raw_request 可看。第一次失败恰好是唯一确定会产生
+// 错误日志的时机，快照落在它身上保证「有错误日志必有原始请求」。
+// 后续重试无论成功还是失败都不再写入（请求级闸门 + 调用方每次失败都会
+// 再次调用本函数，闸门负责挡）。
 func ClaimRawRequestSnapshot(c *gin.Context, decision PolicyDecision, attempt int) bool {
-	if !IsFinalAttempt(decision, attempt) {
-		return false
-	}
 	state := RequestPolicy(c)
 	state.mu.Lock()
 	defer state.mu.Unlock()

@@ -6785,6 +6785,7 @@
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} trong {{total}} cài đặt đã được lưu trước khi thất bại. Hãy kiểm tra các cài đặt còn lại và thử lại."
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} trong {{total}} cài đặt đã được lưu trước khi thất bại. Hãy kiểm tra các cài đặt còn lại và thử lại.",
+    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Ghi nội dung yêu cầu của client (1000 ký tự đầu) và tiêu đề HTTP vào nhật ký lỗi khi lần thử upstream đầu tiên của một yêu cầu thất bại, để điều tra các lần bị từ chối; các lần thử lại sau không ghi lại. Chỉ quản trị viên xem được."
   }
 }

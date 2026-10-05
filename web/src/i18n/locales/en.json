@@ -6785,6 +6785,7 @@
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
-    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again."
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.",
+    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only."
   }
 }

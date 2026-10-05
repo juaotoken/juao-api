@@ -6785,6 +6785,7 @@
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
     "Zoom": "ズーム",
-    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "失敗するまでに {{total}} 件中 {{saved}} 件の設定が保存されました。残りの設定を確認して再試行してください。"
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "失敗するまでに {{total}} 件中 {{saved}} 件の設定が保存されました。残りの設定を確認して再試行してください。",
+    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "リクエストで最初に上流への試行が失敗した際、クライアントのリクエストボディ（先頭 1000 文字）と HTTP ヘッダーをエラーログに記録します（再試行では重複記録しません）。管理者のみ閲覧できます。"
   }
 }

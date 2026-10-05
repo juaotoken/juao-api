@@ -6785,6 +6785,7 @@
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放",
-    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "儲存失敗前已有 {{saved}} / {{total}} 項設定儲存成功。請檢查其餘設定後重試。"
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "儲存失敗前已有 {{saved}} / {{total}} 項設定儲存成功。請檢查其餘設定後重試。",
+    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "在一次請求首次上游失敗時，把客戶端原始請求體（前 1000 字元）與 HTTP 標頭一併寫入錯誤日誌，便於排查上游拒絕原因；後續重試不再重複記錄。僅管理員可見。"
   }
 }
