@@ -6784,6 +6784,7 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V4",
-    "Zoom": "Zoom"
+    "Zoom": "Zoom",
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} trong {{total}} cài đặt đã được lưu trước khi thất bại. Hãy kiểm tra các cài đặt còn lại và thử lại."
   }
 }

@@ -277,8 +277,20 @@ export function LogSettingsSection({
     const updates = Object.entries(values).filter(
       ([key, value]) => value !== defaults[key as keyof LogSettingsFormValues]
     )
-    for (const [key, value] of updates) {
-      await updateOption.mutateAsync({ key, value })
+    // 并行提交：逐项 await 会让后一项的等待叠加在前一项上，且第一项成功、
+    // 第二项失败时用户只看到一句笼统报错。失败时必须说清「有几项已经存上了」，
+    // 否则用户不知道哪些开关实际已生效。
+    const results = await Promise.allSettled(
+      updates.map(([key, value]) => updateOption.mutateAsync({ key, value }))
+    )
+    const failed = results.filter((result) => result.status === 'rejected')
+    if (failed.length > 0) {
+      toast.error(
+        t(
+          '{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.',
+          { saved: results.length - failed.length, total: results.length }
+        )
+      )
     }
   }
 

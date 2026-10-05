@@ -6784,6 +6784,7 @@
     "Zhipu": "智譜",
     "Zhipu GLM": "智譜GLM",
     "Zhipu V4": "智譜 V4",
-    "Zoom": "縮放"
+    "Zoom": "縮放",
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "儲存失敗前已有 {{saved}} / {{total}} 項設定儲存成功。請檢查其餘設定後重試。"
   }
 }

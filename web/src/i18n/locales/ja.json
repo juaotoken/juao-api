@@ -6784,6 +6784,7 @@
     "Zhipu": "Zhipu",
     "Zhipu GLM": "Zhipu GLM",
     "Zhipu V4": "Zhipu V 4",
-    "Zoom": "ズーム"
+    "Zoom": "ズーム",
+    "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "失敗するまでに {{total}} 件中 {{saved}} 件の設定が保存されました。残りの設定を確認して再試行してください。"
   }
 }
