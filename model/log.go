@@ -275,6 +275,21 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 	}
 }
 
+// shouldRecordClientIp 决定消费/错误日志是否落客户端 IP。
+// 站点默认是记录：用户从未表态（设置为 nil）时记，只有显式关闭才不记。
+// 仅消费日志与错误日志走这条判定；充值/系统/退款日志按设计不记 IP。
+func shouldRecordClientIp(userId int) bool {
+	settingMap, err := GetUserSetting(userId, false)
+	if err != nil {
+		// 读不到设置时按站点默认处理，宁可多记也不要因为一次读失败就丢 IP。
+		return true
+	}
+	if settingMap.RecordIpLog == nil {
+		return true
+	}
+	return *settingMap.RecordIpLog
+}
+
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other *LogOther) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, common.LocalLogPreview(content)))
@@ -282,13 +297,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	otherStr := other.JSONString()
-	// 判断是否需要记录 IP
-	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			needRecordIp = true
-		}
-	}
+	needRecordIp := shouldRecordClientIp(userId)
 	log := &Log{
 		UserId:           userId,
 		Username:         username,
@@ -346,13 +355,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	createdAt := common.GetTimestamp()
 	otherStr := params.Other.JSONString()
-	// 判断是否需要记录 IP
-	needRecordIp := false
-	if settingMap, err := GetUserSetting(userId, false); err == nil {
-		if settingMap.RecordIpLog {
-			needRecordIp = true
-		}
-	}
+	needRecordIp := shouldRecordClientIp(userId)
 	log := &Log{
 		UserId:           userId,
 		Username:         username,
