@@ -1268,18 +1268,22 @@ func TopUp(c *gin.Context) {
 }
 
 type UpdateUserSettingRequest struct {
-	QuotaWarningType                 string  `json:"notify_type"`
-	QuotaWarningThreshold            float64 `json:"quota_warning_threshold"`
-	WebhookUrl                       string  `json:"webhook_url,omitempty"`
-	WebhookSecret                    string  `json:"webhook_secret,omitempty"`
-	NotificationEmail                string  `json:"notification_email,omitempty"`
-	BarkUrl                          string  `json:"bark_url,omitempty"`
-	GotifyUrl                        string  `json:"gotify_url,omitempty"`
-	GotifyToken                      string  `json:"gotify_token,omitempty"`
-	GotifyPriority                   int     `json:"gotify_priority,omitempty"`
-	UpstreamModelUpdateNotifyEnabled *bool   `json:"upstream_model_update_notify_enabled,omitempty"`
-	AcceptUnsetModelRatioModel       bool    `json:"accept_unset_model_ratio_model"`
-	RecordIpLog                      bool    `json:"record_ip_log"`
+	// 指针：nil 表示本次请求没有提交这个字段，应保留已存值。
+	// 这个接口服务多个设置卡片（通知页、隐私卡等），各自只提交自己那组字段，
+	// 校验与落库都只针对实际提交的字段，未提交的一律沿用已存值。
+	QuotaWarningType                 *string  `json:"notify_type"`
+	QuotaWarningThreshold            *float64 `json:"quota_warning_threshold"`
+	WebhookUrl                       string   `json:"webhook_url,omitempty"`
+	WebhookSecret                    string   `json:"webhook_secret,omitempty"`
+	NotificationEmail                string   `json:"notification_email,omitempty"`
+	BarkUrl                          string   `json:"bark_url,omitempty"`
+	GotifyUrl                        string   `json:"gotify_url,omitempty"`
+	GotifyToken                      string   `json:"gotify_token,omitempty"`
+	GotifyPriority                   int      `json:"gotify_priority,omitempty"`
+	UpstreamModelUpdateNotifyEnabled *bool    `json:"upstream_model_update_notify_enabled,omitempty"`
+	AcceptUnsetModelRatioModel       bool     `json:"accept_unset_model_ratio_model"`
+	// 指针：nil 表示本次请求没有提交这个字段，应保留已存值而不是覆盖成 false。
+	RecordIpLog *bool `json:"record_ip_log"`
 }
 
 func UpdateUserSetting(c *gin.Context) {
@@ -1289,80 +1293,6 @@ func UpdateUserSetting(c *gin.Context) {
 		return
 	}
 
-	// 验证预警类型
-	if req.QuotaWarningType != dto.NotifyTypeEmail && req.QuotaWarningType != dto.NotifyTypeWebhook && req.QuotaWarningType != dto.NotifyTypeBark && req.QuotaWarningType != dto.NotifyTypeGotify {
-		common.ApiErrorI18n(c, i18n.MsgSettingInvalidType)
-		return
-	}
-
-	// 验证预警阈值
-	if req.QuotaWarningThreshold <= 0 {
-		common.ApiErrorI18n(c, i18n.MsgQuotaThresholdGtZero)
-		return
-	}
-
-	// 如果是webhook类型,验证webhook地址
-	if req.QuotaWarningType == dto.NotifyTypeWebhook {
-		if req.WebhookUrl == "" {
-			common.ApiErrorI18n(c, i18n.MsgSettingWebhookEmpty)
-			return
-		}
-		// 验证URL格式
-		if _, err := url.ParseRequestURI(req.WebhookUrl); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgSettingWebhookInvalid)
-			return
-		}
-	}
-
-	// 如果是邮件类型，验证邮箱地址
-	if req.QuotaWarningType == dto.NotifyTypeEmail && req.NotificationEmail != "" {
-		// 验证邮箱格式
-		if !strings.Contains(req.NotificationEmail, "@") {
-			common.ApiErrorI18n(c, i18n.MsgSettingEmailInvalid)
-			return
-		}
-	}
-
-	// 如果是Bark类型，验证Bark URL
-	if req.QuotaWarningType == dto.NotifyTypeBark {
-		if req.BarkUrl == "" {
-			common.ApiErrorI18n(c, i18n.MsgSettingBarkUrlEmpty)
-			return
-		}
-		// 验证URL格式
-		if _, err := url.ParseRequestURI(req.BarkUrl); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgSettingBarkUrlInvalid)
-			return
-		}
-		// 检查是否是HTTP或HTTPS
-		if !strings.HasPrefix(req.BarkUrl, "https://") && !strings.HasPrefix(req.BarkUrl, "http://") {
-			common.ApiErrorI18n(c, i18n.MsgSettingUrlMustHttp)
-			return
-		}
-	}
-
-	// 如果是Gotify类型，验证Gotify URL和Token
-	if req.QuotaWarningType == dto.NotifyTypeGotify {
-		if req.GotifyUrl == "" {
-			common.ApiErrorI18n(c, i18n.MsgSettingGotifyUrlEmpty)
-			return
-		}
-		if req.GotifyToken == "" {
-			common.ApiErrorI18n(c, i18n.MsgSettingGotifyTokenEmpty)
-			return
-		}
-		// 验证URL格式
-		if _, err := url.ParseRequestURI(req.GotifyUrl); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgSettingGotifyUrlInvalid)
-			return
-		}
-		// 检查是否是HTTP或HTTPS
-		if !strings.HasPrefix(req.GotifyUrl, "https://") && !strings.HasPrefix(req.GotifyUrl, "http://") {
-			common.ApiErrorI18n(c, i18n.MsgSettingUrlMustHttp)
-			return
-		}
-	}
-
 	userId := c.GetInt("id")
 	user, err := model.GetUserById(userId, true)
 	if err != nil {
@@ -1370,47 +1300,142 @@ func UpdateUserSetting(c *gin.Context) {
 		return
 	}
 	existingSettings := user.GetSetting()
+
+	// 只有提交了告警类型才校验告警字段——只提交 record_ip_log 的隐私卡请求
+	// 不该被告警校验挡住（此前 unconditional 校验导致这类请求永远失败）。
+	if req.QuotaWarningType != nil {
+		// 验证预警类型
+		if *req.QuotaWarningType != dto.NotifyTypeEmail && *req.QuotaWarningType != dto.NotifyTypeWebhook && *req.QuotaWarningType != dto.NotifyTypeBark && *req.QuotaWarningType != dto.NotifyTypeGotify {
+			common.ApiErrorI18n(c, i18n.MsgSettingInvalidType)
+			return
+		}
+
+		// 验证预警阈值（告警字段成组提交：有类型就必须带正阈值）
+		if req.QuotaWarningThreshold == nil || *req.QuotaWarningThreshold <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgQuotaThresholdGtZero)
+			return
+		}
+
+		// 如果是webhook类型,验证webhook地址
+		if *req.QuotaWarningType == dto.NotifyTypeWebhook {
+			if req.WebhookUrl == "" {
+				common.ApiErrorI18n(c, i18n.MsgSettingWebhookEmpty)
+				return
+			}
+			// 验证URL格式
+			if _, err := url.ParseRequestURI(req.WebhookUrl); err != nil {
+				common.ApiErrorI18n(c, i18n.MsgSettingWebhookInvalid)
+				return
+			}
+		}
+
+		// 如果是邮件类型，验证邮箱地址
+		if *req.QuotaWarningType == dto.NotifyTypeEmail && req.NotificationEmail != "" {
+			// 验证邮箱格式
+			if !strings.Contains(req.NotificationEmail, "@") {
+				common.ApiErrorI18n(c, i18n.MsgSettingEmailInvalid)
+				return
+			}
+		}
+
+		// 如果是Bark类型，验证Bark URL
+		if *req.QuotaWarningType == dto.NotifyTypeBark {
+			if req.BarkUrl == "" {
+				common.ApiErrorI18n(c, i18n.MsgSettingBarkUrlEmpty)
+				return
+			}
+			// 验证URL格式
+			if _, err := url.ParseRequestURI(req.BarkUrl); err != nil {
+				common.ApiErrorI18n(c, i18n.MsgSettingBarkUrlInvalid)
+				return
+			}
+			// 检查是否是HTTP或HTTPS
+			if !strings.HasPrefix(req.BarkUrl, "https://") && !strings.HasPrefix(req.BarkUrl, "http://") {
+				common.ApiErrorI18n(c, i18n.MsgSettingUrlMustHttp)
+				return
+			}
+		}
+
+		// 如果是Gotify类型，验证Gotify URL和Token
+		if *req.QuotaWarningType == dto.NotifyTypeGotify {
+			if req.GotifyUrl == "" {
+				common.ApiErrorI18n(c, i18n.MsgSettingGotifyUrlEmpty)
+				return
+			}
+			if req.GotifyToken == "" {
+				common.ApiErrorI18n(c, i18n.MsgSettingGotifyTokenEmpty)
+				return
+			}
+			// 验证URL格式
+			if _, err := url.ParseRequestURI(req.GotifyUrl); err != nil {
+				common.ApiErrorI18n(c, i18n.MsgSettingGotifyUrlInvalid)
+				return
+			}
+			// 检查是否是HTTP或HTTPS
+			if !strings.HasPrefix(req.GotifyUrl, "https://") && !strings.HasPrefix(req.GotifyUrl, "http://") {
+				common.ApiErrorI18n(c, i18n.MsgSettingUrlMustHttp)
+				return
+			}
+		}
+	}
+
 	upstreamModelUpdateNotifyEnabled := existingSettings.UpstreamModelUpdateNotifyEnabled
 	if user.Role >= common.RoleAdminUser && req.UpstreamModelUpdateNotifyEnabled != nil {
 		upstreamModelUpdateNotifyEnabled = *req.UpstreamModelUpdateNotifyEnabled
 	}
 
-	// 构建设置
+	// 构建设置。未在本次请求中提交的字段沿用已存值，
+	// 避免通知页/隐私卡互相把对方的设置冲掉。
 	settings := dto.UserSetting{
-		NotifyType:                       req.QuotaWarningType,
-		QuotaWarningThreshold:            req.QuotaWarningThreshold,
+		NotifyType:                       existingSettings.NotifyType,
+		QuotaWarningThreshold:            existingSettings.QuotaWarningThreshold,
+		WebhookUrl:                       existingSettings.WebhookUrl,
+		WebhookSecret:                    existingSettings.WebhookSecret,
+		NotificationEmail:                existingSettings.NotificationEmail,
+		BarkUrl:                          existingSettings.BarkUrl,
+		GotifyUrl:                        existingSettings.GotifyUrl,
+		GotifyToken:                      existingSettings.GotifyToken,
+		GotifyPriority:                   existingSettings.GotifyPriority,
 		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
 		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
-		RecordIpLog:                      req.RecordIpLog,
+		RecordIpLog:                      existingSettings.RecordIpLog,
+	}
+	if req.RecordIpLog != nil {
+		settings.RecordIpLog = req.RecordIpLog
 	}
 
-	// 如果是webhook类型,添加webhook相关设置
-	if req.QuotaWarningType == dto.NotifyTypeWebhook {
-		settings.WebhookUrl = req.WebhookUrl
-		if req.WebhookSecret != "" {
-			settings.WebhookSecret = req.WebhookSecret
+	if req.QuotaWarningType != nil {
+		settings.NotifyType = *req.QuotaWarningType
+		settings.QuotaWarningThreshold = *req.QuotaWarningThreshold
+
+		// 如果是webhook类型,添加webhook相关设置
+		if *req.QuotaWarningType == dto.NotifyTypeWebhook {
+			settings.WebhookUrl = req.WebhookUrl
+			if req.WebhookSecret != "" {
+				settings.WebhookSecret = req.WebhookSecret
+			}
 		}
-	}
 
-	// 如果提供了通知邮箱，添加到设置中
-	if req.QuotaWarningType == dto.NotifyTypeEmail && req.NotificationEmail != "" {
-		settings.NotificationEmail = req.NotificationEmail
-	}
+		// 如果提供了通知邮箱，添加到设置中
+		if *req.QuotaWarningType == dto.NotifyTypeEmail && req.NotificationEmail != "" {
+			settings.NotificationEmail = req.NotificationEmail
+		}
 
-	// 如果是Bark类型，添加Bark URL到设置中
-	if req.QuotaWarningType == dto.NotifyTypeBark {
-		settings.BarkUrl = req.BarkUrl
-	}
+		// 如果是Bark类型，添加Bark URL到设置中
+		if *req.QuotaWarningType == dto.NotifyTypeBark {
+			settings.BarkUrl = req.BarkUrl
+		}
 
-	// 如果是Gotify类型，添加Gotify配置到设置中
-	if req.QuotaWarningType == dto.NotifyTypeGotify {
-		settings.GotifyUrl = req.GotifyUrl
-		settings.GotifyToken = req.GotifyToken
-		// Gotify优先级范围0-10，超出范围则使用默认值5
-		if req.GotifyPriority < 0 || req.GotifyPriority > 10 {
-			settings.GotifyPriority = 5
-		} else {
-			settings.GotifyPriority = req.GotifyPriority
+		// 如果是Gotify类型，添加Gotify配置到设置中
+		if *req.QuotaWarningType == dto.NotifyTypeGotify {
+			settings.GotifyUrl = req.GotifyUrl
+			settings.GotifyToken = req.GotifyToken
+			// Gotify优先级范围0-10，超出范围则使用默认值5
+			if req.GotifyPriority < 0 || req.GotifyPriority > 10 {
+				settings.GotifyPriority = 5
+			} else {
+				settings.GotifyPriority = req.GotifyPriority
+			}
 		}
 	}
 
