@@ -42,6 +42,7 @@ import {
   FormControl,
   FormDescription,
   FormField,
+  FormItem,
   FormLabel,
   FormMessage,
 } from '@/components/ui/form'
@@ -82,10 +83,19 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import type { LogCleanupTask } from '../types'
+import { safeNumberFieldProps } from '../utils/numeric-field'
+
+// 与后端 common.ErrorLogRawRequestBodyLimitMax 保持一致。
+const RAW_REQUEST_BODY_LIMIT_MAX = 1000000
 
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
   ErrorLogRawRequestEnabled: z.boolean(),
+  ErrorLogRawRequestBodyLimit: z
+    .number()
+    .int()
+    .min(0)
+    .max(RAW_REQUEST_BODY_LIMIT_MAX),
 })
 
 type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
@@ -93,6 +103,7 @@ type LogSettingsFormValues = z.infer<typeof logSettingsSchema>
 type LogSettingsSectionProps = {
   defaultEnabled: boolean
   rawRequestDefaultEnabled: boolean
+  rawRequestBodyLimit: number
 }
 
 type ServerLogInfo = {
@@ -149,6 +160,7 @@ function isActiveLogCleanupTask(task: LogCleanupTask | null) {
 export function LogSettingsSection({
   defaultEnabled,
   rawRequestDefaultEnabled,
+  rawRequestBodyLimit,
 }: LogSettingsSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -157,6 +169,7 @@ export function LogSettingsSection({
     defaultValues: {
       LogConsumeEnabled: defaultEnabled,
       ErrorLogRawRequestEnabled: rawRequestDefaultEnabled,
+      ErrorLogRawRequestBodyLimit: rawRequestBodyLimit,
     },
   })
 
@@ -187,8 +200,9 @@ export function LogSettingsSection({
     form.reset({
       LogConsumeEnabled: defaultEnabled,
       ErrorLogRawRequestEnabled: rawRequestDefaultEnabled,
+      ErrorLogRawRequestBodyLimit: rawRequestBodyLimit,
     })
-  }, [defaultEnabled, rawRequestDefaultEnabled, form])
+  }, [defaultEnabled, rawRequestDefaultEnabled, rawRequestBodyLimit, form])
 
   useEffect(() => {
     fetchServerLogInfo()
@@ -273,6 +287,7 @@ export function LogSettingsSection({
     const defaults: LogSettingsFormValues = {
       LogConsumeEnabled: defaultEnabled,
       ErrorLogRawRequestEnabled: rawRequestDefaultEnabled,
+      ErrorLogRawRequestBodyLimit: rawRequestBodyLimit,
     }
     const updates = Object.entries(values).filter(
       ([key, value]) => value !== defaults[key as keyof LogSettingsFormValues]
@@ -408,7 +423,7 @@ export function LogSettingsSection({
                   </FormLabel>
                   <FormDescription>
                     {t(
-                      'Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.'
+                      'Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.'
                     )}
                   </FormDescription>
                 </SettingsSwitchContent>
@@ -420,6 +435,32 @@ export function LogSettingsSection({
                 </FormControl>
                 <FormMessage />
               </SettingsSwitchItem>
+            )}
+          />
+
+          <FormField
+            control={form.control}
+            name='ErrorLogRawRequestBodyLimit'
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>{t('Raw request body length')}</FormLabel>
+                <FormControl>
+                  <Input
+                    type='number'
+                    min={0}
+                    max={RAW_REQUEST_BODY_LIMIT_MAX}
+                    step={1}
+                    {...safeNumberFieldProps(field)}
+                  />
+                </FormControl>
+                <FormDescription>
+                  {t(
+                    'Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.',
+                    { max: RAW_REQUEST_BODY_LIMIT_MAX }
+                  )}
+                </FormDescription>
+                <FormMessage />
+              </FormItem>
             )}
           />
 

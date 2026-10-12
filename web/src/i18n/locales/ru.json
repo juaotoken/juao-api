@@ -2620,7 +2620,7 @@
     "footer.columns.related.links.oneApi": "Один API",
     "footer.columns.related.title": "Связанные проекты",
     "footer.defaultCopyright": "Все права защищены.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
+    "footer.newapi.projectAttributionSuffix": "Все права защищены. Разработано участниками проекта.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Для расширенных пользовательских каналов это действует только для маршрутов /v1/responses без преобразования протокола.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Для каналов, добавленных после 10 мая 2025 г., не нужно удалять \".\" из имён моделей при развёртывании",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Для частных развертываний, формат: https://fastgpt.run/api/openapi",
@@ -6786,6 +6786,8 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} из {{total}} настроек были сохранены до сбоя. Проверьте оставшиеся настройки и повторите попытку.",
-    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Записывает тело запроса клиента (первые 1000 символов) и HTTP-заголовки при первой неудачной попытке обращения к вышестоящему сервису, чтобы можно было разобрать отказы; повторные попытки не записываются. Видно только администраторам."
+    "Raw request body length": "Длина тела исходного запроса",
+    "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Сколько символов тела запроса сохранять, не более {{max}}. Если одна только структура полей длиннее, она сохраняется в фактической длине.",
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Сохранять тело клиентского запроса и HTTP-заголовки при первой неудачной попытке запроса к вышестоящему сервису, чтобы разбирать отказы. В длинных телах сохраняются все поля, сокращаются только значения содержимого. Видно только администраторам."
   }
 }

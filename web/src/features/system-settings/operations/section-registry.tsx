@@ -99,6 +99,7 @@ const OPERATIONS_SECTIONS = [
       <LogSettingsSection
         defaultEnabled={Boolean(settings.LogConsumeEnabled)}
         rawRequestDefaultEnabled={settings.ErrorLogRawRequestEnabled ?? true}
+        rawRequestBodyLimit={settings.ErrorLogRawRequestBodyLimit ?? 1000}
       />
     ),
   },

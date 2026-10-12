@@ -15,7 +15,7 @@ You should have received a copy of the GNU Affero General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { Toaster } from 'sonner'
@@ -44,6 +44,7 @@ function Fixture(props: Partial<Parameters<typeof LogSettingsSection>[0]>) {
         <LogSettingsSection
           defaultEnabled
           rawRequestDefaultEnabled={false}
+          rawRequestBodyLimit={1000}
           {...props}
         />
       </SettingsPageProvider>
@@ -88,9 +89,7 @@ describe('log settings save', () => {
         name: 'Record raw request info in error logs',
       })
     )
-    await user.click(
-      screen.getByRole('button', { name: 'Save log settings' })
-    )
+    await user.click(screen.getByRole('button', { name: 'Save log settings' }))
 
     expect(
       await screen.findByText(
@@ -107,9 +106,7 @@ describe('log settings save', () => {
     renderSection()
 
     await user.click(screen.getByRole('switch', { name: 'Record quota usage' }))
-    await user.click(
-      screen.getByRole('button', { name: 'Save log settings' })
-    )
+    await user.click(screen.getByRole('button', { name: 'Save log settings' }))
 
     await waitFor(() =>
       expect(
@@ -119,5 +116,32 @@ describe('log settings save', () => {
     expect(
       screen.queryByText('Failed to update setting')
     ).not.toBeInTheDocument()
+  })
+
+  it('saves a custom raw request body length and rejects values above the maximum', async () => {
+    mockMountReads()
+    const put = vi
+      .spyOn(api, 'put')
+      .mockResolvedValue({ data: { success: true } })
+    const user = userEvent.setup()
+    renderSection()
+
+    const input = screen.getByRole('spinbutton', {
+      name: 'Raw request body length',
+    })
+    // safeNumberFieldProps 忽略空值（NaN），user.clear 清不掉旧值，直接写入完整数值。
+    fireEvent.change(input, { target: { value: '1000001' } })
+    await user.click(screen.getByRole('button', { name: 'Save log settings' }))
+    await waitFor(() => expect(input).toHaveAttribute('aria-invalid', 'true'))
+    expect(put).not.toHaveBeenCalled()
+
+    fireEvent.change(input, { target: { value: '5000' } })
+    await user.click(screen.getByRole('button', { name: 'Save log settings' }))
+
+    await waitFor(() => expect(put).toHaveBeenCalledTimes(1))
+    expect(put.mock.calls[0][1]).toEqual({
+      key: 'ErrorLogRawRequestBodyLimit',
+      value: 5000,
+    })
   })
 })

@@ -2620,7 +2620,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Related Projects",
     "footer.defaultCopyright": "All rights reserved.",
-    "footer.new\u0061pi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
+    "footer.newapi.projectAttributionSuffix": "All rights reserved. Designed and developed by the project contributors.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment",
     "For private deployments, format: https://fastgpt.run/api/openapi": "For private deployments, format: https://fastgpt.run/api/openapi",
@@ -6786,6 +6786,8 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.",
-    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only."
+    "Raw request body length": "Raw request body length",
+    "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.",
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only."
   }
 }

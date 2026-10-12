@@ -94,9 +94,17 @@ var MemoryCacheEnabled bool
 var LogConsumeEnabled = true
 
 // ErrorLogRawRequestEnabled 控制错误日志是否附带原始请求快照
-// （original body 前 1000 字符 + HTTP method / URL / 请求头）。
+// （按字段压缩后的 body + HTTP method / URL / 请求头）。
 // 站点默认开启：这是排查上游报错的唯一线索。
 var ErrorLogRawRequestEnabled = true
+
+// ErrorLogRawRequestBodyLimit 是原始请求快照里 body 的目标字符数。超出时保留全部
+// 字段、只截短内容值；字段结构本身更长时按结构实际长度保存。没有下限。
+var ErrorLogRawRequestBodyLimit = 1000
+
+// ErrorLogRawRequestBodyLimitMax 是 ErrorLogRawRequestBodyLimit 允许配置的最大值，
+// 同时是单条快照 body 的硬上限（字段结构超长时也不突破）。
+const ErrorLogRawRequestBodyLimitMax = 1000000
 
 var TLSInsecureSkipVerify bool
 var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}

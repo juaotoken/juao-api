@@ -2620,7 +2620,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Với kênh tùy chỉnh nâng cao, thiết lập này chỉ áp dụng cho các route /v1/responses không chuyển đổi giao thức.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
@@ -6786,6 +6786,8 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} trong {{total}} cài đặt đã được lưu trước khi thất bại. Hãy kiểm tra các cài đặt còn lại và thử lại.",
-    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Ghi nội dung yêu cầu của client (1000 ký tự đầu) và tiêu đề HTTP vào nhật ký lỗi khi lần thử upstream đầu tiên của một yêu cầu thất bại, để điều tra các lần bị từ chối; các lần thử lại sau không ghi lại. Chỉ quản trị viên xem được."
+    "Raw request body length": "Độ dài thân yêu cầu gốc",
+    "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Số ký tự của thân yêu cầu được lưu, tối đa {{max}}. Nếu riêng cấu trúc trường đã dài hơn, sẽ lưu theo độ dài thực tế của cấu trúc.",
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Lưu thân yêu cầu của client và header HTTP ở lần gọi upstream thất bại đầu tiên của một yêu cầu để điều tra lý do bị từ chối. Thân dài sẽ giữ mọi trường và chỉ rút gọn giá trị nội dung. Chỉ quản trị viên nhìn thấy."
   }
 }

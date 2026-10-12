@@ -864,7 +864,7 @@
     "Blocked keywords": "已阻止的關鍵詞",
     "Blocks messages when sensitive keywords are detected.": "偵測到敏感關鍵詞時阻止訊息。",
     "Body param": "請求體參數",
-    "Body truncated, original size: {{bytes}} bytes": "請求體已截斷，原始大小 {{bytes}} 位元組",
+    "Body truncated, original size: {{bytes}} bytes": "請求體已壓縮（保留全部欄位，內容值已截短），原始大小 {{bytes}} 位元組",
     "Boolean": "布林",
     "Border radius": "圓角",
     "Bot Name": "機械人名稱",
@@ -2620,7 +2620,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相關項目",
     "footer.defaultCopyright": "版權所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
+    "footer.newapi.projectAttributionSuffix": "版權所有，由項目貢獻者設計與開發。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "進階自訂渠道僅對 /v1/responses 且不做協定轉換的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "對於 2025 年 5 月 10 日之後新增的渠道，在部署時無需從模型名稱中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "對於私有部署，格式為：https://fastgpt.run/api/openapi",
@@ -6786,6 +6786,8 @@
     "Zhipu V4": "智譜 V4",
     "Zoom": "縮放",
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "儲存失敗前已有 {{saved}} / {{total}} 項設定儲存成功。請檢查其餘設定後重試。",
-    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "在一次請求首次上游失敗時，把客戶端原始請求體（前 1000 字元）與 HTTP 標頭一併寫入錯誤日誌，便於排查上游拒絕原因；後續重試不再重複記錄。僅管理員可見。"
+    "Raw request body length": "原始請求體保存長度",
+    "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "請求體保存的字元數，最大 {{max}}，預設 1000。若僅欄位結構就超過該長度，則按欄位結構的實際長度保存。",
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "在一次請求首次上游失敗時，把用戶端原始請求體與 HTTP 請求標頭一併寫入錯誤日誌，便於排查上游拒絕原因；後續重試不再重複記錄。超長請求體會保留全部欄位，只壓縮內容值。僅管理員可見。"
   }
 }

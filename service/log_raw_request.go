@@ -2,28 +2,51 @@ package service
 
 import (
 	"io"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 const (
-	// rawRequestBodyRuneLimit 是写入日志的 body 字符数上限。按 rune 计数，
-	// 中文 prompt 能看满 1000 个汉字；同时天然不会切出半个 UTF-8 字符。
-	rawRequestBodyRuneLimit = 1000
-	// rawRequestBodyReadBytes 是实际从 BodyStorage 读出的字节上限。
-	// UTF-8 单字符最多 4 字节，1000 个字符最坏情况需要 4000 字节；
-	// 多读 1 字节用于判断是否发生了截断。
-	rawRequestBodyReadBytes = rawRequestBodyRuneLimit*4 + 1
+	// rawRequestBodyParseMaxBytes 是按字段压缩时允许整份解析的 body 上限。
+	// 更大的 body（多为内联的大图/音频）退回到只读前缀截断，避免为一条错误日志
+	// 把几十 MB 的请求整份读进内存再遍历。
+	rawRequestBodyParseMaxBytes = 32 << 20
+	// rawRequestProtectedValueRuneLimit 是系统字段（model/role/type 等）值的保留上限：
+	// 不超过它就原样保留、不参与压缩；异常长的系统字段值仍按普通内容压缩。
+	rawRequestProtectedValueRuneLimit = 256
+	// rawRequestMinPreviewRunes 是内容字段压缩后至少保留的字符数。字段结构本身已超出
+	// 配置长度时，按这个下限保留每个值的开头，让管理员仍能认出内容。
+	rawRequestMinPreviewRunes = 8
+	// rawRequestMaxNestingDepth 是按字段压缩允许的最大嵌套层数。压缩是递归遍历，
+	// 更深的 body（正常请求不会出现）退回到前缀截断，避免恶意嵌套撑爆栈。
+	rawRequestMaxNestingDepth = 256
+	// rawRequestMaxRenderPasses 是收紧上限后重新渲染的最多次数。
+	rawRequestMaxRenderPasses = 8
 	// rawRequestHeaderValueRuneLimit 是单个请求头值的字符数上限，
 	// 防止异常客户端塞超长头把日志撑爆。
 	rawRequestHeaderValueRuneLimit = 512
 	// rawRequestMaskedValue 是凭据类请求头的替换值。
 	rawRequestMaskedValue = "***"
 )
+
+// rawRequestSystemKeys 是请求体里由客户端 SDK / 协议决定、而不是用户输入的字段。
+// 它们的值通常很短且对排查上游拒绝最有用（模型名、角色、内容块类型、工具 id 等），
+// 压缩时原样保留；数组值（如 stop、modalities）的元素同样受保护。
+var rawRequestSystemKeys = map[string]struct{}{
+	"model": {}, "role": {}, "type": {}, "name": {}, "id": {}, "object": {},
+	"tool_call_id": {}, "tool_use_id": {}, "call_id": {}, "media_type": {}, "mime_type": {},
+	"format": {}, "detail": {}, "stop": {}, "stop_sequences": {}, "modalities": {},
+	"tool_choice": {}, "reasoning_effort": {}, "effort": {}, "service_tier": {}, "voice": {},
+	"encoding_format": {}, "quality": {}, "size": {}, "style": {}, "response_format": {},
+	"cache_control": {}, "status": {}, "finish_reason": {}, "previous_response_id": {},
+}
 
 // RawRequestInfo 是错误日志里记录的原始请求快照。
 // 它挂载在 other.admin_info.raw_request 下，仅管理员及以上可见。
@@ -127,11 +150,199 @@ func isJSONContentType(contentType string) bool {
 	return mediaType == "application/json" || strings.HasSuffix(mediaType, "+json")
 }
 
-// collectRawRequestBody 从 BodyStorage 的独立游标限量读出入站请求体。
-// 读取失败或没有 body 时返回空串，由调用方继续用 Size() 记录总长度。
+// rawRequestTruncationMarker 是被压缩的字符串值末尾追加的标记，注明省略了多少字符。
+func rawRequestTruncationMarker(omitted int) string {
+	return "…[+" + strconv.Itoa(omitted) + " chars]"
+}
+
+// requestBodyCompressor 把 JSON 请求体压缩到目标长度：保留全部字段与结构、
+// 系统字段的值，以及数字/布尔/null；只截短内容类字符串值（用户输入、
+// base64 数据、签名等）。所有内容字符串共用一个截断上限，上限取满足目标
+// 长度的最大值——短的值因此原样保留，长的值各留开头一段。
+type requestBodyCompressor struct {
+	// skeletonRunes 是不可压缩部分（括号、键、标点、系统字段与标量值）的字符数。
+	skeletonRunes int
+	// contentRunes 是每个可压缩字符串值（解码后）的字符数。
+	contentRunes []int
+	// contentRawRunes 是每个可压缩字符串值原样输出（含引号与转义）时的字符数。
+	contentRawRunes []int
+}
+
+func isProtectedRequestValue(value gjson.Result, protected bool) bool {
+	return protected && utf8.RuneCountInString(value.Str) <= rawRequestProtectedValueRuneLimit
+}
+
+func (b *requestBodyCompressor) measure(value gjson.Result, protected bool) {
+	switch {
+	case value.IsObject():
+		b.skeletonRunes += 2
+		first := true
+		value.ForEach(func(key, child gjson.Result) bool {
+			if !first {
+				b.skeletonRunes++
+			}
+			first = false
+			b.skeletonRunes += utf8.RuneCountInString(key.Raw) + 1
+			_, isSystemKey := rawRequestSystemKeys[key.Str]
+			b.measure(child, isSystemKey)
+			return true
+		})
+	case value.IsArray():
+		b.skeletonRunes += 2
+		first := true
+		value.ForEach(func(_, child gjson.Result) bool {
+			if !first {
+				b.skeletonRunes++
+			}
+			first = false
+			b.measure(child, protected)
+			return true
+		})
+	case value.Type == gjson.String && !isProtectedRequestValue(value, protected):
+		b.contentRunes = append(b.contentRunes, utf8.RuneCountInString(value.Str))
+		b.contentRawRunes = append(b.contentRawRunes, utf8.RuneCountInString(value.Raw))
+	default:
+		b.skeletonRunes += utf8.RuneCountInString(value.Raw)
+	}
+}
+
+// estimatedRunes 估算以 limit 为截断上限时的输出字符数。被截断的值按「前缀 + 标记 + 引号」
+// 计，前缀里的转义字符不计入——误差由 compressRequestBody 的收紧循环兜住。
+func (b *requestBodyCompressor) estimatedRunes(limit int) int {
+	total := b.skeletonRunes
+	for i, runes := range b.contentRunes {
+		if runes <= limit {
+			total += b.contentRawRunes[i]
+			continue
+		}
+		total += limit + utf8.RuneCountInString(rawRequestTruncationMarker(runes-limit)) + 2
+	}
+	return total
+}
+
+func (b *requestBodyCompressor) render(out *strings.Builder, value gjson.Result, protected bool, limit int) {
+	switch {
+	case value.IsObject():
+		out.WriteByte('{')
+		first := true
+		value.ForEach(func(key, child gjson.Result) bool {
+			if !first {
+				out.WriteByte(',')
+			}
+			first = false
+			out.WriteString(key.Raw)
+			out.WriteByte(':')
+			_, isSystemKey := rawRequestSystemKeys[key.Str]
+			b.render(out, child, isSystemKey, limit)
+			return true
+		})
+		out.WriteByte('}')
+	case value.IsArray():
+		out.WriteByte('[')
+		first := true
+		value.ForEach(func(_, child gjson.Result) bool {
+			if !first {
+				out.WriteByte(',')
+			}
+			first = false
+			b.render(out, child, protected, limit)
+			return true
+		})
+		out.WriteByte(']')
+	case value.Type == gjson.String && !isProtectedRequestValue(value, protected):
+		runes := []rune(value.Str)
+		if len(runes) <= limit {
+			out.WriteString(value.Raw)
+			return
+		}
+		encoded, err := common.Marshal(string(runes[:limit]) + rawRequestTruncationMarker(len(runes)-limit))
+		if err != nil {
+			out.WriteString(`""`)
+			return
+		}
+		out.Write(encoded)
+	default:
+		out.WriteString(value.Raw)
+	}
+}
+
+// compressRequestBody 把 JSON body 压缩到约 targetRunes 个字符。
+// 字段结构本身就超过目标时，按结构的实际长度保存（每个内容值保留
+// rawRequestMinPreviewRunes 个字符），不会为了凑长度丢字段。
+// 返回值 compressed 表示是否有字符串值被截短。
+func compressRequestBody(body string, targetRunes int) (result string, compressed bool) {
+	root := gjson.Parse(body)
+	compressor := &requestBodyCompressor{}
+	compressor.measure(root, false)
+
+	longest := 0
+	for _, runes := range compressor.contentRunes {
+		longest = max(longest, runes)
+	}
+	limit := longest
+	if compressor.estimatedRunes(longest) > targetRunes {
+		// estimatedRunes 随 limit 单调不减：二分出满足目标的最大上限。
+		low, high := rawRequestMinPreviewRunes, longest
+		for low < high {
+			mid := (low + high + 1) / 2
+			if compressor.estimatedRunes(mid) <= targetRunes {
+				low = mid
+			} else {
+				high = mid - 1
+			}
+		}
+		limit = low
+	}
+
+	for pass := 1; ; pass++ {
+		var out strings.Builder
+		compressor.render(&out, root, false, limit)
+		result = out.String()
+		actual := utf8.RuneCountInString(result)
+		if actual <= targetRunes || limit <= rawRequestMinPreviewRunes || pass >= rawRequestMaxRenderPasses {
+			return result, limit < longest
+		}
+		// 转义字符让实际长度略超估算：按内容部分的超出比例收紧上限再渲染一次。
+		contentBudget := max(1, targetRunes-compressor.skeletonRunes)
+		contentActual := max(1, actual-compressor.skeletonRunes)
+		limit = max(rawRequestMinPreviewRunes, min(limit-1, limit*contentBudget/contentActual))
+	}
+}
+
+// jsonNestingDepth 返回 JSON 文本的最大括号嵌套层数（忽略字符串内的括号）。
+// 迭代扫描，不受嵌套深度影响。
+func jsonNestingDepth(data []byte) int {
+	depth, deepest := 0, 0
+	inString, escaped := false, false
+	for _, ch := range data {
+		switch {
+		case inString:
+			if escaped {
+				escaped = false
+			} else if ch == '\\' {
+				escaped = true
+			} else if ch == '"' {
+				inString = false
+			}
+		case ch == '"':
+			inString = true
+		case ch == '{' || ch == '[':
+			depth++
+			deepest = max(deepest, depth)
+		case ch == '}' || ch == ']':
+			depth--
+		}
+	}
+	return deepest
+}
+
+// collectRawRequestBody 从 BodyStorage 读出入站请求体并压缩到配置长度
+// （common.ErrorLogRawRequestBodyLimit 个字符）。读取失败或没有 body 时返回空串，
+// 由调用方继续用 Size() 记录总长度。
 //
-// 刻意不用 storage.Bytes()：它会 io.ReadFull 整个 body，遇到大请求会把
-// 整份内容读进内存。
+// JSON body 按字段压缩（见 compressRequestBody）：所有字段都保留，只截短内容值。
+// 非法 JSON、嵌套过深或超过 rawRequestBodyParseMaxBytes 的 body 退回到前缀截断。
+// 压缩结果无论如何不超过 common.ErrorLogRawRequestBodyLimitMax 个字符。
 //
 // 注意本函数的读取并不完全无副作用：NewReader() 拿到的确实是独立游标、
 // 不扰动正在被上游消费的那份，但 common.GetBodyStorage(c) 会经由
@@ -156,22 +367,34 @@ func collectRawRequestBody(c *gin.Context) (body string, truncated bool, totalBy
 		// 二进制/表单 body 写进日志既不可读又占体积，只留一行标记。
 		return "[skip non-json body: " + contentType + "]", false, totalBytes, contentType
 	}
+	targetRunes := min(max(common.ErrorLogRawRequestBodyLimit, 0), common.ErrorLogRawRequestBodyLimitMax)
 	reader, err := storage.NewReader()
 	if err != nil {
 		return "", false, totalBytes, contentType
 	}
 	defer reader.Close()
-	raw, err := io.ReadAll(io.LimitReader(reader, rawRequestBodyReadBytes))
+	if totalBytes <= rawRequestBodyParseMaxBytes {
+		raw, err := io.ReadAll(reader)
+		if err != nil {
+			return "", false, totalBytes, contentType
+		}
+		if jsonNestingDepth(raw) <= rawRequestMaxNestingDepth && gjson.ValidBytes(raw) {
+			body, truncated = compressRequestBody(string(raw), targetRunes)
+			if hardCapped, capped := truncateRunes(body, common.ErrorLogRawRequestBodyLimitMax); capped {
+				return hardCapped, true, totalBytes, contentType
+			}
+			return body, truncated, totalBytes, contentType
+		}
+		body, truncated = truncateRunes(string(raw), targetRunes)
+		return body, truncated, totalBytes, contentType
+	}
+	// UTF-8 单字符最多 4 字节，多读 1 字节用于判断是否发生了截断。
+	raw, err := io.ReadAll(io.LimitReader(reader, int64(targetRunes)*4+1))
 	if err != nil {
 		return "", false, totalBytes, contentType
 	}
-	body, truncated = truncateRunes(string(raw), rawRequestBodyRuneLimit)
-	// 兜底：读到上限时 truncateRunes 必然已报截断（4001 字节至少解出 1001 个 rune）。
-	// 这一步只在 rawRequestBodyReadBytes 被调小到与 rune 上限不再匹配时才生效。
-	if !truncated {
-		truncated = totalBytes > int64(len(raw))
-	}
-	return body, truncated, totalBytes, contentType
+	body, _ = truncateRunes(string(raw), targetRunes)
+	return body, true, totalBytes, contentType
 }
 
 // CollectRawRequestInfo 采集错误日志要记录的原始请求快照。

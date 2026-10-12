@@ -137,12 +137,31 @@ func FormatRootLogs(logs []*Log) {
 	}
 }
 
+// excludeRetriedErrorLogs 让日志属主只看到每个请求的最终结果：一条错误日志
+// 只要同一 request_id 之后还有消费或错误日志（即这次失败被重试了），就不展示。
+// 管理员视图不走这里，所有尝试都可见。
+//
+// 「之后」按自增 id 判定——同一请求的多次失败常落在同一秒，created_at 分不出先后。
+// ClickHouse 没有自增 id，退化为「created_at 小于该请求最后一条日志的时间」，
+// 同一秒内的多条失败会一并展示；它也不支持关联子查询，所以按 scopeColumn
+// （user_id / token_id）限定子查询范围。request_id 为空的历史行无法归并，一律展示。
+func excludeRetriedErrorLogs(tx *gorm.DB, scopeColumn string, scopeValue int) *gorm.DB {
+	resultTypes := []int{LogTypeConsume, LogTypeError}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return tx.Where("(logs.type <> ? OR logs.request_id = '' OR (logs.request_id, logs.created_at) IN (SELECT request_id, max(created_at) FROM logs WHERE "+scopeColumn+" = ? AND type IN ? GROUP BY request_id))",
+			LogTypeError, scopeValue, resultTypes)
+	}
+	return tx.Where("(logs.type <> ? OR logs.request_id = '' OR NOT EXISTS (SELECT 1 FROM logs later WHERE later.request_id = logs.request_id AND later.user_id = logs.user_id AND later.id > logs.id AND later.type IN ?))",
+		LogTypeError, resultTypes)
+}
+
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	order := "id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		order = clickHouseLogOrder("")
 	}
-	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
+	tx := excludeRetriedErrorLogs(LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId), "token_id", tokenId)
+	err = tx.Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
 	formatUserLogs(logs, 0)
 	return logs, err
 }
@@ -560,12 +579,17 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 
 const logSearchCountLimit = 10000
 
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+// GetUserLogs 查询某用户自己的日志。hideRetriedErrors 为真时只保留每个请求的
+// 最终结果（见 excludeRetriedErrorLogs），普通用户走这条；管理员查自己的日志不隐藏。
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, hideRetriedErrors bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
 	} else {
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
+	}
+	if hideRetriedErrors && (logType == LogTypeUnknown || logType == LogTypeError) {
+		tx = excludeRetriedErrorLogs(tx, "user_id", userId)
 	}
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {

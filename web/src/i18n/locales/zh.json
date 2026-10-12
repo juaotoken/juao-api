@@ -864,7 +864,7 @@
     "Blocked keywords": "已阻止的关键词",
     "Blocks messages when sensitive keywords are detected.": "检测到敏感关键词时阻止消息。",
     "Body param": "请求体参数",
-    "Body truncated, original size: {{bytes}} bytes": "请求体已截断，原始大小 {{bytes}} 字节",
+    "Body truncated, original size: {{bytes}} bytes": "请求体已压缩（保留全部字段，内容值已截短），原始大小 {{bytes}} 字节",
     "Boolean": "布尔",
     "Border radius": "圆角",
     "Bot Name": "机器人名称",
@@ -2620,7 +2620,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "相关项目",
     "footer.defaultCopyright": "版权所有。",
-    "footer.new\u0061pi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
+    "footer.newapi.projectAttributionSuffix": "版权所有，由项目贡献者设计与开发。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高级自定义渠道仅对 /v1/responses 且不做协议转换的路由生效。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "对于 2025 年 5 月 10 日之后添加的渠道，在部署时无需从模型名称中移除 \".\"",
     "For private deployments, format: https://fastgpt.run/api/openapi": "对于私有部署，格式为：https://fastgpt.run/api/openapi",
@@ -6786,6 +6786,8 @@
     "Zhipu V4": "智谱 V4",
     "Zoom": "缩放",
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "保存失败前有 {{saved}} / {{total}} 项设置已保存。请检查其余设置后重试。",
-    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "在一次请求首次上游失败时，把客户端原始请求体（前 1000 字符）与 HTTP 请求头一并写入错误日志，便于排查上游拒绝原因；后续重试不再重复记录。仅管理员可见。"
+    "Raw request body length": "原始请求体保存长度",
+    "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "请求体保存的字符数，最大 {{max}}，默认 1000。若仅字段结构就超过该长度，则按字段结构的实际长度保存。",
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "在一次请求首次上游失败时，把客户端原始请求体与 HTTP 请求头一并写入错误日志，便于排查上游拒绝原因；后续重试不再重复记录。超长请求体会保留全部字段，只压缩内容值。仅管理员可见。"
   }
 }

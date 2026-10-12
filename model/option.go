@@ -1,6 +1,7 @@
 package model
 
 import (
+	"fmt"
 	"maps"
 	"strconv"
 	"strings"
@@ -52,6 +53,7 @@ func InitOptionMap() {
 	common.OptionMap["AutomaticEnableChannelEnabled"] = strconv.FormatBool(common.AutomaticEnableChannelEnabled)
 	common.OptionMap["LogConsumeEnabled"] = strconv.FormatBool(common.LogConsumeEnabled)
 	common.OptionMap["ErrorLogRawRequestEnabled"] = strconv.FormatBool(common.ErrorLogRawRequestEnabled)
+	common.OptionMap["ErrorLogRawRequestBodyLimit"] = strconv.Itoa(common.ErrorLogRawRequestBodyLimit)
 	common.OptionMap["DisplayInCurrencyEnabled"] = strconv.FormatBool(common.DisplayInCurrencyEnabled)
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
@@ -240,6 +242,12 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == "MaxTokenAutoGroups" {
 		return setting.ValidateMaxTokenAutoGroups(value)
+	}
+	if key == "ErrorLogRawRequestBodyLimit" {
+		limit, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || limit < 0 || limit > common.ErrorLogRawRequestBodyLimitMax {
+			return fmt.Errorf("错误日志请求体保存长度必须是 0 到 %d 之间的整数", common.ErrorLogRawRequestBodyLimitMax)
+		}
 	}
 	return nil
 }
@@ -625,6 +633,10 @@ func updateOptionMap(key string, value string) (err error) {
 		err = setting.UpdateModelRequestRateLimitGroupByJSONString(value)
 	case "RetryTimes":
 		common.RetryTimes, _ = strconv.Atoi(value)
+	case "ErrorLogRawRequestBodyLimit":
+		if limit, err := strconv.Atoi(strings.TrimSpace(value)); err == nil {
+			common.ErrorLogRawRequestBodyLimit = min(max(limit, 0), common.ErrorLogRawRequestBodyLimitMax)
+		}
 	case "DataExportInterval":
 		common.DataExportInterval, _ = strconv.Atoi(value)
 	case "DataExportDefaultTime":

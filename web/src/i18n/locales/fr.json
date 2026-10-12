@@ -2620,7 +2620,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Projets liés",
     "footer.defaultCopyright": "Tous droits réservés.",
-    "footer.new\u0061pi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
+    "footer.newapi.projectAttributionSuffix": "Tous droits réservés. Conçu et développé par les contributeurs du projet.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Pour les canaux personnalisés avancés, ceci ne s’applique qu’aux routes /v1/responses sans conversion de protocole.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Pour les canaux ajoutés après le 10 mai 2025, pas besoin de supprimer \".\" des noms de modèles lors du déploiement",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Pour les déploiements privés, format : https://fastgpt.run/api/openapi",
@@ -6786,6 +6786,8 @@
     "Zhipu V4": "Zhipu V4",
     "Zoom": "Zoom",
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} paramètre(s) sur {{total}} ont été enregistrés avant l’échec. Vérifiez les paramètres restants et réessayez.",
-    "Store the client request body (first 1000 characters) and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Visible to administrators only.": "Enregistre le corps de la requête client (1 000 premiers caractères) et les en-têtes HTTP lors du premier essai en amont échoué d'une requête, afin d'analyser les rejets en amont ; les nouvelles tentatives ne sont pas enregistrées à nouveau. Visible uniquement par les administrateurs."
+    "Raw request body length": "Longueur du corps de requête brut",
+    "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Nombre de caractères du corps de requête à conserver, jusqu’à {{max}}. Si la structure des champs dépasse à elle seule cette longueur, elle est stockée à sa longueur réelle.",
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Enregistre le corps de la requête client et les en-têtes HTTP lors du premier échec en amont d’une requête, pour analyser les refus en amont. Les corps longs conservent tous les champs et seules les valeurs de contenu sont raccourcies. Visible uniquement par les administrateurs."
   }
 }
