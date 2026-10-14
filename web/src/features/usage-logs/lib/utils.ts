@@ -199,6 +199,9 @@ export function buildApiParams(config: {
     ...(searchParams.upstreamRequestId
       ? { upstream_request_id: String(searchParams.upstreamRequestId) }
       : {}),
+    ...(searchParams.quota === 'zero' || searchParams.quota === 'nonzero'
+      ? { quota_filter: searchParams.quota }
+      : {}),
     ...buildTimeRangeParams(searchParams, false),
   }
 

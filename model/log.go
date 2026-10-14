@@ -483,13 +483,38 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	}
 }
 
-func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
+// 日志列表的「费用」过滤取值。
+const (
+	LogQuotaFilterZero    = "zero"
+	LogQuotaFilterNonZero = "nonzero"
+)
+
+// applyLogQuotaFilter 按费用是否为 0 过滤日志。费用只对消费与错误日志有意义：
+// 未指定日志类型时同时限定为这两类（错误日志费用恒为 0，选「为 0」时会一并列出）；
+// 指定了类型时只在该类型内按费用过滤。其他取值视为不过滤。
+func applyLogQuotaFilter(tx *gorm.DB, logType int, quotaFilter string) *gorm.DB {
+	switch quotaFilter {
+	case LogQuotaFilterZero:
+		tx = tx.Where("logs.quota = ?", 0)
+	case LogQuotaFilterNonZero:
+		tx = tx.Where("logs.quota <> ?", 0)
+	default:
+		return tx
+	}
+	if logType == LogTypeUnknown {
+		tx = tx.Where("logs.type IN ?", []int{LogTypeConsume, LogTypeError})
+	}
+	return tx
+}
+
+func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string, quotaFilter string) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB
 	} else {
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
+	tx = applyLogQuotaFilter(tx, logType, quotaFilter)
 
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
@@ -581,13 +606,14 @@ const logSearchCountLimit = 10000
 
 // GetUserLogs 查询某用户自己的日志。hideRetriedErrors 为真时只保留每个请求的
 // 最终结果（见 excludeRetriedErrorLogs），普通用户走这条；管理员查自己的日志不隐藏。
-func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, hideRetriedErrors bool) (logs []*Log, total int64, err error) {
+func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int64, modelName string, tokenName string, startIdx int, num int, group string, requestId string, upstreamRequestId string, quotaFilter string, hideRetriedErrors bool) (logs []*Log, total int64, err error) {
 	var tx *gorm.DB
 	if logType == LogTypeUnknown {
 		tx = LOG_DB.Where("logs.user_id = ?", userId)
 	} else {
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
+	tx = applyLogQuotaFilter(tx, logType, quotaFilter)
 	if hideRetriedErrors && (logType == LogTypeUnknown || logType == LogTypeError) {
 		tx = excludeRetriedErrorLogs(tx, "user_id", userId)
 	}

@@ -89,21 +89,21 @@ func TestGetUserLogsHidesRetriedErrorAttempts(t *testing.T) {
 				return result
 			}
 
-			userLogs, total, err := GetUserLogs(userId, LogTypeUnknown, 0, 0, "", "", 0, 50, "", "", "", true)
+			userLogs, total, err := GetUserLogs(userId, LogTypeUnknown, 0, 0, "", "", 0, 50, "", "", "", "", true)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"topup", "status_code=500, only", "consume", "status_code=400, final"}, contents(userLogs))
 			assert.EqualValues(t, 4, total, "分页总数必须与过滤后的行数一致")
 
-			errorLogs, total, err := GetUserLogs(userId, LogTypeError, 0, 0, "", "", 0, 50, "", "", "", true)
+			errorLogs, total, err := GetUserLogs(userId, LogTypeError, 0, 0, "", "", 0, 50, "", "", "", "", true)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"status_code=500, only", "status_code=400, final"}, contents(errorLogs))
 			assert.EqualValues(t, 2, total)
 
-			byRequest, _, err := GetUserLogs(userId, LogTypeUnknown, 0, 0, "", "", 0, 50, "", "req-retry-ok", "", true)
+			byRequest, _, err := GetUserLogs(userId, LogTypeUnknown, 0, 0, "", "", 0, 50, "", "req-retry-ok", "", "", true)
 			require.NoError(t, err)
 			assert.Equal(t, []string{"consume"}, contents(byRequest), "按 request_id 查也只看到重试后的成功日志")
 
-			adminView, total, err := GetUserLogs(userId, LogTypeError, 0, 0, "", "", 0, 50, "", "", "", false)
+			adminView, total, err := GetUserLogs(userId, LogTypeError, 0, 0, "", "", 0, 50, "", "", "", "", false)
 			require.NoError(t, err)
 			assert.Len(t, adminView, 5, "管理员看到全部失败尝试")
 			assert.EqualValues(t, 5, total)
@@ -129,4 +129,53 @@ func TestErrorLogRawRequestBodyLimitOption(t *testing.T) {
 
 	require.NoError(t, updateOptionMap("ErrorLogRawRequestBodyLimit", "5000"))
 	assert.Equal(t, 5000, common.ErrorLogRawRequestBodyLimit)
+}
+
+// 费用过滤：所有类型 + 为 0 → 消费为 0 的日志和错误日志；指定类型时只在该类型内过滤。
+func TestLogQuotaFilter(t *testing.T) {
+	for _, dialect := range []string{"sqlite", "mysql", "postgres"} {
+		t.Run(dialect, func(t *testing.T) {
+			useRetryVisibilityLogDB(t, dialect)
+			const userId = 60
+			rows := []Log{
+				{UserId: userId, Type: LogTypeConsume, Quota: 0, CreatedAt: 100, RequestId: "r1", Content: "consume-free"},
+				{UserId: userId, Type: LogTypeConsume, Quota: 1500, CreatedAt: 101, RequestId: "r2", Content: "consume-paid"},
+				{UserId: userId, Type: LogTypeError, Quota: 0, CreatedAt: 102, RequestId: "r3", Content: "error"},
+				{UserId: userId, Type: LogTypeTopup, Quota: 500000, CreatedAt: 103, Content: "topup"},
+				{UserId: userId, Type: LogTypeSystem, Quota: 0, CreatedAt: 104, Content: "system"},
+			}
+			for i := range rows {
+				require.NoError(t, LOG_DB.Create(&rows[i]).Error)
+			}
+			contents := func(logs []*Log) []string {
+				result := make([]string, 0, len(logs))
+				for _, log := range logs {
+					result = append(result, log.Content)
+				}
+				return result
+			}
+			for _, tc := range []struct {
+				logType int
+				filter  string
+				want    []string
+			}{
+				{LogTypeUnknown, LogQuotaFilterZero, []string{"error", "consume-free"}},
+				{LogTypeUnknown, LogQuotaFilterNonZero, []string{"consume-paid"}},
+				{LogTypeConsume, LogQuotaFilterZero, []string{"consume-free"}},
+				{LogTypeConsume, LogQuotaFilterNonZero, []string{"consume-paid"}},
+				{LogTypeError, LogQuotaFilterZero, []string{"error"}},
+				{LogTypeUnknown, "", []string{"system", "topup", "error", "consume-paid", "consume-free"}},
+			} {
+				userLogs, total, err := GetUserLogs(userId, tc.logType, 0, 0, "", "", 0, 50, "", "", "", tc.filter, false)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, contents(userLogs), "user type=%d filter=%q", tc.logType, tc.filter)
+				assert.EqualValues(t, len(tc.want), total)
+
+				adminLogs, total, err := GetAllLogs(tc.logType, 0, 0, "", "", "", 0, 50, 0, "", "", "", tc.filter)
+				require.NoError(t, err)
+				assert.Equal(t, tc.want, contents(adminLogs), "admin type=%d filter=%q", tc.logType, tc.filter)
+				assert.EqualValues(t, len(tc.want), total)
+			}
+		})
+	}
 }

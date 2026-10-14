@@ -22,7 +22,8 @@ func GetAllLogs(c *gin.Context) {
 	group := c.Query("group")
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
-	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId)
+	quotaFilter := c.Query("quota_filter")
+	logs, total, err := model.GetAllLogs(logType, startTimestamp, endTimestamp, modelName, username, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), channel, group, requestId, upstreamRequestId, quotaFilter)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -49,9 +50,10 @@ func GetUserLogs(c *gin.Context) {
 	group := c.Query("group")
 	requestId := c.Query("request_id")
 	upstreamRequestId := c.Query("upstream_request_id")
+	quotaFilter := c.Query("quota_filter")
 	// 普通用户只看每个请求的最终结果，被重试掉的失败尝试不展示；管理员看全部尝试。
 	hideRetriedErrors := c.GetInt("role") < common.RoleAdminUser
-	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId, hideRetriedErrors)
+	logs, total, err := model.GetUserLogs(userId, logType, startTimestamp, endTimestamp, modelName, tokenName, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), group, requestId, upstreamRequestId, quotaFilter, hideRetriedErrors)
 	if err != nil {
 		common.ApiError(c, err)
 		return

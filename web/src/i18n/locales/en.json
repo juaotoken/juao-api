@@ -6796,6 +6796,9 @@
     "The auto group always uses the global retry settings": "The auto group always uses the global retry settings",
     "Enter an integer from 0 to 99, or leave empty": "Enter an integer from 0 to 99, or leave empty",
     "This group is already configured": "This group is already configured",
-    "Group retry setting": "Group retry setting"
+    "Group retry setting": "Group retry setting",
+    "All costs": "All costs",
+    "Cost is 0": "Cost is 0",
+    "Cost is not 0": "Cost is not 0"
   }
 }

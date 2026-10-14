@@ -6796,6 +6796,9 @@
     "The auto group always uses the global retry settings": "Группа auto всегда использует глобальные настройки повторов",
     "Enter an integer from 0 to 99, or leave empty": "Введите целое число от 0 до 99 или оставьте пустым",
     "This group is already configured": "Эта группа уже настроена",
-    "Group retry setting": "Настройка группы"
+    "Group retry setting": "Настройка группы",
+    "All costs": "Любая стоимость",
+    "Cost is 0": "Стоимость равна 0",
+    "Cost is not 0": "Стоимость не 0"
   }
 }

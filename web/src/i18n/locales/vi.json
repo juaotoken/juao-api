@@ -6796,6 +6796,9 @@
     "The auto group always uses the global retry settings": "Nhóm auto luôn dùng cài đặt thử lại toàn cục",
     "Enter an integer from 0 to 99, or leave empty": "Nhập số nguyên từ 0 đến 99 hoặc để trống",
     "This group is already configured": "Nhóm này đã được cấu hình",
-    "Group retry setting": "Cài đặt nhóm"
+    "Group retry setting": "Cài đặt nhóm",
+    "All costs": "Mọi chi phí",
+    "Cost is 0": "Chi phí bằng 0",
+    "Cost is not 0": "Chi phí khác 0"
   }
 }

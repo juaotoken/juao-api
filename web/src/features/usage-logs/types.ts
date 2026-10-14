@@ -55,7 +55,15 @@ export interface CommonLogFilters extends CommonFilters {
   username?: string
   requestId?: string
   upstreamRequestId?: string
+  quota?: LogQuotaFilter
 }
+
+/**
+ * Cost filter for common logs: zero-cost or non-zero-cost entries. Without a
+ * type filter it covers consumption and error logs; with one it applies within
+ * that type.
+ */
+export type LogQuotaFilter = 'zero' | 'nonzero'
 
 /**
  * Drawing logs specific filters
@@ -446,6 +454,7 @@ export interface GetLogsParams {
   group?: string
   request_id?: string
   upstream_request_id?: string
+  quota_filter?: LogQuotaFilter
 }
 
 export interface GetLogsResponse {

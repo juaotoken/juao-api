@@ -6796,6 +6796,9 @@
     "The auto group always uses the global retry settings": "auto 分组始终使用全局重试设置",
     "Enter an integer from 0 to 99, or leave empty": "请输入 0–99 的整数，或留空",
     "This group is already configured": "该分组已配置",
-    "Group retry setting": "分组重试设置"
+    "Group retry setting": "分组重试设置",
+    "All costs": "全部费用",
+    "Cost is 0": "费用为 0",
+    "Cost is not 0": "费用非 0"
   }
 }

@@ -6796,6 +6796,9 @@
     "The auto group always uses the global retry settings": "Le groupe auto utilise toujours les réglages globaux de nouvelle tentative",
     "Enter an integer from 0 to 99, or leave empty": "Saisissez un entier de 0 à 99, ou laissez vide",
     "This group is already configured": "Ce groupe est déjà configuré",
-    "Group retry setting": "Réglage de groupe"
+    "Group retry setting": "Réglage de groupe",
+    "All costs": "Tous les coûts",
+    "Cost is 0": "Coût égal à 0",
+    "Cost is not 0": "Coût différent de 0"
   }
 }

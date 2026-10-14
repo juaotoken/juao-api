@@ -59,6 +59,9 @@ import { useLogsViewScope, useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
+// Select value for "no cost filter"; never sent to the backend.
+const QUOTA_FILTER_ALL = 'all'
+
 type LogTypeValue = (typeof LOG_TYPE_FILTERS)[number]['value']
 const logTypeValueSet = new Set<string>(
   LOG_TYPE_FILTERS.map((type) => type.value)
@@ -93,6 +96,7 @@ function buildSearchSourceKey(values: {
   username?: unknown
   requestId?: unknown
   upstreamRequestId?: unknown
+  quota?: unknown
   type?: unknown
 }) {
   return [
@@ -105,6 +109,7 @@ function buildSearchSourceKey(values: {
     values.username,
     values.requestId,
     values.upstreamRequestId,
+    values.quota,
     Array.isArray(values.type) ? values.type.join(',') : values.type,
   ]
     .map((value) => String(value ?? ''))
@@ -157,6 +162,7 @@ export function CommonLogsFilterBar<TData>(
       username: searchParams.username,
       requestId: searchParams.requestId,
       upstreamRequestId: searchParams.upstreamRequestId,
+      quota: searchParams.quota,
       type: searchParams.type,
     }
     const filters: CommonLogFilters = {
@@ -171,6 +177,7 @@ export function CommonLogsFilterBar<TData>(
       username: searchParams.username || undefined,
       requestId: searchParams.requestId || undefined,
       upstreamRequestId: searchParams.upstreamRequestId || undefined,
+      quota: searchParams.quota,
     }
     return {
       sourceKey: buildSearchSourceKey(sourceValues),
@@ -187,6 +194,7 @@ export function CommonLogsFilterBar<TData>(
     searchParams.username,
     searchParams.requestId,
     searchParams.upstreamRequestId,
+    searchParams.quota,
     searchParams.type,
   ])
   const [draft, setDraft] = useState<CommonLogDraft>(() => searchState)
@@ -270,7 +278,11 @@ export function CommonLogsFilterBar<TData>(
 
   const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
   const hasAdditionalFilters =
-    !!filters.model || !!filters.group || hasTypeFilter || hasExpandedFilters
+    !!filters.model ||
+    !!filters.group ||
+    !!filters.quota ||
+    hasTypeFilter ||
+    hasExpandedFilters
 
   const expandedFilterCount = [
     filters.token,
@@ -289,6 +301,14 @@ export function CommonLogsFilterBar<TData>(
         label: t(type.label),
         deprecated: type.deprecated,
       })),
+    [t]
+  )
+  const quotaItems = useMemo(
+    () => [
+      { value: QUOTA_FILTER_ALL, label: t('All costs') },
+      { value: 'zero', label: t('Cost is 0') },
+      { value: 'nonzero', label: t('Cost is not 0') },
+    ],
     [t]
   )
   const selectedLogType = logTypeItems.find((type) => type.value === logType)
@@ -432,6 +452,33 @@ export function CommonLogsFilterBar<TData>(
       </Select>
     </LogsFilterField>
   )
+  const quotaFilter = (
+    <LogsFilterField>
+      <Select
+        items={quotaItems}
+        value={filters.quota ?? QUOTA_FILTER_ALL}
+        onValueChange={(value) =>
+          handleChange(
+            'quota',
+            value === 'zero' || value === 'nonzero' ? value : undefined
+          )
+        }
+      >
+        <SelectTrigger aria-label={t('Cost')}>
+          <SelectValue className='min-w-0' />
+        </SelectTrigger>
+        <SelectContent alignItemWithTrigger={false}>
+          <SelectGroup>
+            {quotaItems.map((item) => (
+              <SelectItem key={item.value} value={item.value}>
+                {item.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </LogsFilterField>
+  )
   const advancedFilters = (
     <>
       <LogsFilterField>
@@ -495,6 +542,7 @@ export function CommonLogsFilterBar<TData>(
           {modelFilter}
           {groupFilter}
           {typeFilter}
+          {quotaFilter}
         </>
       }
       advancedFilters={advancedFilters}
@@ -504,12 +552,14 @@ export function CommonLogsFilterBar<TData>(
           {modelFilter}
           {groupFilter}
           {typeFilter}
+          {quotaFilter}
           {advancedFilters}
         </>
       }
       mobileFilterCount={
-        [filters.model, filters.group, hasTypeFilter].filter(Boolean).length +
-        expandedFilterCount
+        [filters.model, filters.group, filters.quota, hasTypeFilter].filter(
+          Boolean
+        ).length + expandedFilterCount
       }
       hasAdvancedActiveFilters={hasExpandedFilters}
       advancedFilterCount={expandedFilterCount}

@@ -37,6 +37,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 
 import { api } from '@/lib/api'
 
+import { buildApiParams } from '../../lib/utils'
 import { CommonLogsFilterBar } from '../common-logs-filter-bar'
 import { UsageLogsProvider } from '../usage-logs-provider'
 
@@ -126,5 +127,38 @@ it('marks only retired log types as deprecated while keeping historical filters 
   await userEvent.click(screen.getByRole('button', { name: 'Search' }))
   await waitFor(() =>
     expect(router.state.location.search).toMatchObject({ type: ['7'], page: 1 })
+  )
+})
+
+it('filters by cost together with the log type and sends quota_filter to the API', async () => {
+  const router = await renderFilter()
+  const cost = screen.getByRole('combobox', { name: 'Cost' })
+  expect(cost).toHaveTextContent('All costs')
+  await userEvent.click(cost)
+  await userEvent.click(screen.getByRole('option', { name: 'Cost is 0' }))
+  await userEvent.click(screen.getByRole('combobox', { name: 'Type' }))
+  await userEvent.click(screen.getByRole('option', { name: 'Consume' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).toMatchObject({
+      type: ['2'],
+      quota: 'zero',
+      page: 1,
+    })
+  )
+  expect(
+    buildApiParams({
+      page: 1,
+      pageSize: 10,
+      searchParams: router.state.location.search,
+      isAdmin: false,
+    })
+  ).toMatchObject({ type: 2, quota_filter: 'zero' })
+
+  await userEvent.click(screen.getByRole('combobox', { name: 'Cost' }))
+  await userEvent.click(screen.getByRole('option', { name: 'All costs' }))
+  await userEvent.click(screen.getByRole('button', { name: 'Search' }))
+  await waitFor(() =>
+    expect(router.state.location.search).not.toHaveProperty('quota')
   )
 })

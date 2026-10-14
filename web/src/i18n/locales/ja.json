@@ -6796,6 +6796,9 @@
     "The auto group always uses the global retry settings": "auto グループは常にグローバルのリトライ設定を使用します",
     "Enter an integer from 0 to 99, or leave empty": "0〜99 の整数を入力するか、空欄にしてください",
     "This group is already configured": "このグループは設定済みです",
-    "Group retry setting": "グループのリトライ設定"
+    "Group retry setting": "グループのリトライ設定",
+    "All costs": "すべての費用",
+    "Cost is 0": "費用が 0",
+    "Cost is not 0": "費用が 0 以外"
   }
 }
