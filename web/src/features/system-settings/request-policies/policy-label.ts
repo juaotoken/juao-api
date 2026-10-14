@@ -44,6 +44,8 @@ export function policyLabel(t: TFunction, value: string): string {
       return t('Channel')
     case 'global':
       return t('Global default')
+    case 'group':
+      return t('Group retry setting')
     case 'global_and_channel':
       return t('Global and channel settings')
     case 'session_rule':

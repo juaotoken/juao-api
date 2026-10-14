@@ -5185,7 +5185,7 @@
     "Select a color": "選擇顏色",
     "Select a complete plan, then keep only the routes you need.": "選擇完整方案，再保留需要的路由。",
     "Select a concrete model to configure pricing. Metadata matching does not propagate prices.": "請選擇具體模型設定價格，中繼資料比對不會傳播定價。",
-    "Select a group": "選擇一個分組",
+    "Select a group": "選擇分組",
     "Select a group type": "選擇分組類型",
     "Select a model to edit pricing": "選擇一個模型編輯定價",
     "Select a preset...": "選擇一個預設...",
@@ -6788,6 +6788,14 @@
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "儲存失敗前已有 {{saved}} / {{total}} 項設定儲存成功。請檢查其餘設定後重試。",
     "Raw request body length": "原始請求體保存長度",
     "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "請求體保存的字元數，最大 {{max}}，預設 1000。若僅欄位結構就超過該長度，則按欄位結構的實際長度保存。",
-    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "在一次請求首次上游失敗時，把用戶端原始請求體與 HTTP 請求標頭一併寫入錯誤日誌，便於排查上游拒絕原因；後續重試不再重複記錄。超長請求體會保留全部欄位，只壓縮內容值。僅管理員可見。"
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "在一次請求首次上游失敗時，把用戶端原始請求體與 HTTP 請求標頭一併寫入錯誤日誌，便於排查上游拒絕原因；後續重試不再重複記錄。超長請求體會保留全部欄位，只壓縮內容值。僅管理員可見。",
+    "Per-group retry settings": "分組獨立重試設定",
+    "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.": "為指定的定價分組單獨設定重試次數和自動重試狀態碼，留空的項目沿用上方全域設定。auto 分組始終使用全域設定。",
+    "Global": "沿用全域",
+    "Remove group {{group}}": "移除分組 {{group}}",
+    "The auto group always uses the global retry settings": "auto 分組始終使用全域重試設定",
+    "Enter an integer from 0 to 99, or leave empty": "請輸入 0–99 的整數，或留空",
+    "This group is already configured": "該分組已設定",
+    "Group retry setting": "分組重試設定"
   }
 }

@@ -5185,7 +5185,7 @@
     "Select a color": "Sélectionner une couleur",
     "Select a complete plan, then keep only the routes you need.": "Sélectionnez un plan complet, puis gardez les routes nécessaires.",
     "Select a concrete model to configure pricing. Metadata matching does not propagate prices.": "Sélectionnez un modèle précis pour définir ses tarifs. La correspondance des métadonnées ne propage pas les prix.",
-    "Select a group": "Sélectionner un groupe",
+    "Select a group": "Sélectionnez un groupe",
     "Select a group type": "Sélectionner un type de groupe",
     "Select a model to edit pricing": "Sélectionnez un modèle pour modifier sa tarification",
     "Select a preset...": "Sélectionner un préréglage...",
@@ -6788,6 +6788,14 @@
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} paramètre(s) sur {{total}} ont été enregistrés avant l’échec. Vérifiez les paramètres restants et réessayez.",
     "Raw request body length": "Longueur du corps de requête brut",
     "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Nombre de caractères du corps de requête à conserver, jusqu’à {{max}}. Si la structure des champs dépasse à elle seule cette longueur, elle est stockée à sa longueur réelle.",
-    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Enregistre le corps de la requête client et les en-têtes HTTP lors du premier échec en amont d’une requête, pour analyser les refus en amont. Les corps longs conservent tous les champs et seules les valeurs de contenu sont raccourcies. Visible uniquement par les administrateurs."
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Enregistre le corps de la requête client et les en-têtes HTTP lors du premier échec en amont d’une requête, pour analyser les refus en amont. Les corps longs conservent tous les champs et seules les valeurs de contenu sont raccourcies. Visible uniquement par les administrateurs.",
+    "Per-group retry settings": "Réglages de nouvelle tentative par groupe",
+    "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.": "Remplace le nombre de tentatives et les codes de statut pour certains groupes tarifaires. Les champs vides reprennent les valeurs globales ci-dessus. Le groupe auto utilise toujours les réglages globaux.",
+    "Global": "Global",
+    "Remove group {{group}}": "Retirer le groupe {{group}}",
+    "The auto group always uses the global retry settings": "Le groupe auto utilise toujours les réglages globaux de nouvelle tentative",
+    "Enter an integer from 0 to 99, or leave empty": "Saisissez un entier de 0 à 99, ou laissez vide",
+    "This group is already configured": "Ce groupe est déjà configuré",
+    "Group retry setting": "Réglage de groupe"
   }
 }

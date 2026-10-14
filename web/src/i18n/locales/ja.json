@@ -6788,6 +6788,14 @@
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "失敗するまでに {{total}} 件中 {{saved}} 件の設定が保存されました。残りの設定を確認して再試行してください。",
     "Raw request body length": "生リクエストボディの保存長",
     "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "保存するリクエストボディの文字数（最大 {{max}}）。フィールド構造だけでこの長さを超える場合は、構造の実際の長さで保存します。",
-    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "リクエストの最初のアップストリーム失敗時に、クライアントのリクエストボディと HTTP ヘッダーをエラーログに保存し、拒否理由を調査できるようにします。長いボディは全フィールドを保持し、内容の値のみ短縮します。管理者のみ表示されます。"
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "リクエストの最初のアップストリーム失敗時に、クライアントのリクエストボディと HTTP ヘッダーをエラーログに保存し、拒否理由を調査できるようにします。長いボディは全フィールドを保持し、内容の値のみ短縮します。管理者のみ表示されます。",
+    "Per-group retry settings": "グループ別リトライ設定",
+    "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.": "特定の料金グループのリトライ回数とステータスコードを個別に設定します。空欄は上のグローバル値を使用します。auto グループは常にグローバル設定を使用します。",
+    "Global": "グローバル",
+    "Remove group {{group}}": "グループ {{group}} を削除",
+    "The auto group always uses the global retry settings": "auto グループは常にグローバルのリトライ設定を使用します",
+    "Enter an integer from 0 to 99, or leave empty": "0〜99 の整数を入力するか、空欄にしてください",
+    "This group is already configured": "このグループは設定済みです",
+    "Group retry setting": "グループのリトライ設定"
   }
 }

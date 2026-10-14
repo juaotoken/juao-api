@@ -2,6 +2,8 @@ package service
 
 import (
 	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +11,9 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
@@ -118,3 +123,64 @@ func TestShouldRetryRelayErrorMatchesDecision(t *testing.T) {
 			"状态码 %d 两个入口的结论不一致", code)
 	}
 }
+
+// 分组独立重试设置：命中的分组用自己的重试次数与状态码，其余分组与 auto 分组走全局。
+func TestGroupRetryOverrides(t *testing.T) {
+	database := setupRawRequestLogTestDB(t)
+	require.NoError(t, database.AutoMigrate(&model.Option{}))
+	previousOptions := maps.Clone(model.CurrentRequestPolicy().Options)
+	common.OptionMapRWMutex.Lock()
+	previousOptionMap := common.OptionMap
+	common.OptionMap = maps.Clone(previousOptions)
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		require.NoError(t, model.UpdateRequestPolicyOptions(previousOptions))
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap = previousOptionMap
+		common.OptionMapRWMutex.Unlock()
+	})
+	require.NoError(t, model.UpdateRequestPolicyOptions(map[string]string{
+		"RetryTimes":                "2",
+		"AutomaticRetryStatusCodes": "500-599",
+		"GroupRetryOverrides":       `{"cc-max":{"retry_times":5,"status_codes":"429"},"gemini":{"status_codes":"400"},"budget-only":{"retry_times":0}}`,
+	}))
+
+	withGroup := func(group string) *gin.Context {
+		c := retryCtx(t)
+		if group != "" {
+			common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
+		}
+		return c
+	}
+	for _, tc := range []struct {
+		group      string
+		wantTimes  int
+		status     int
+		wantAction string
+		wantSource string
+	}{
+		{group: "cc-max", wantTimes: 5, status: 429, wantAction: "retry", wantSource: "group"},
+		{group: "cc-max", wantTimes: 5, status: 502, wantAction: "stop", wantSource: "group"},
+		{group: "gemini", wantTimes: 2, status: 400, wantAction: "retry", wantSource: "group"},
+		{group: "budget-only", wantTimes: 0, status: 502, wantAction: "retry", wantSource: "global"},
+		{group: "default", wantTimes: 2, status: 429, wantAction: "stop", wantSource: "global"},
+		{group: "default", wantTimes: 2, status: 502, wantAction: "retry", wantSource: "global"},
+		{group: "auto", wantTimes: 2, status: 429, wantAction: "stop", wantSource: "global"},
+		{group: "", wantTimes: 2, status: 502, wantAction: "retry", wantSource: "global"},
+	} {
+		t.Run(fmt.Sprintf("%s/%d", tc.group, tc.status), func(t *testing.T) {
+			c := withGroup(tc.group)
+			require.Equal(t, tc.wantTimes, RequestRetryTimes(c))
+			decision := DecideRelayRetry(c, upstreamErr(tc.status, ""), 1)
+			require.Equal(t, tc.wantAction, decision.Action)
+			require.Equal(t, tc.wantSource, decision.Source)
+		})
+	}
+
+	exhausted := DecideRelayRetry(withGroup("cc-max"), upstreamErr(429, ""), 0)
+	require.Equal(t, "stop", exhausted.Action)
+	require.Equal(t, "group", exhausted.Source, "预算耗尽的来源标注为分组配置")
+	globalExhausted := DecideRelayRetry(withGroup("gemini"), upstreamErr(400, ""), 0)
+	require.Equal(t, "global", globalExhausted.Source, "只覆盖状态码的分组，预算仍来自全局")
+}
+

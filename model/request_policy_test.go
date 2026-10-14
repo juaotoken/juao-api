@@ -117,6 +117,31 @@ func TestRequestPolicyDatabaseMatrix(t *testing.T) {
 			assert.Equal(t, "2", option.Value)
 			loadOptionsFromDatabase()
 			assert.Equal(t, "strict", CurrentRequestPolicy().Affinity.SessionMode, "a failed save keeps the persisted global mode")
+
+			// 分组独立重试设置：持久化、重载后仍生效；auto 分组与非法值被拒绝且不改动快照。
+			groupOverrides := `{"非直连-CC-MAX":{"retry_times":4,"status_codes":"429,500-599"},"Gemini（非直连）":{"status_codes":"502"}}`
+			require.NoError(t, UpdateRequestPolicyOptions(map[string]string{"GroupRetryOverrides": groupOverrides}))
+			loadOptionsFromDatabase()
+			loadOptionsFromDatabase()
+			ccMax := CurrentRequestPolicy().GroupRetry["非直连-CC-MAX"]
+			require.NotNil(t, ccMax.RetryTimes)
+			assert.Equal(t, 4, *ccMax.RetryTimes)
+			assert.Equal(t, []operation_setting.StatusCodeRange{{Start: 429, End: 429}, {Start: 500, End: 599}}, ccMax.RetryCodes)
+			gemini := CurrentRequestPolicy().GroupRetry["Gemini（非直连）"]
+			assert.Nil(t, gemini.RetryTimes, "omitted retry times fall back to the global value")
+			assert.Equal(t, []operation_setting.StatusCodeRange{{Start: 502, End: 502}}, gemini.RetryCodes)
+			assert.Equal(t, 2, CurrentRequestPolicy().RetryTimes, "group overrides never change the global budget")
+			snapshot = CurrentRequestPolicy()
+			for _, invalid := range []string{
+				`{"auto":{"retry_times":3}}`,
+				`{"g":{"retry_times":-1}}`,
+				`{"g":{"status_codes":"abc"}}`,
+				`{"":{"retry_times":1}}`,
+				`[`,
+			} {
+				assert.Error(t, UpdateRequestPolicyOptions(map[string]string{"GroupRetryOverrides": invalid}), invalid)
+				assert.Same(t, snapshot, CurrentRequestPolicy())
+			}
 		})
 	}
 }

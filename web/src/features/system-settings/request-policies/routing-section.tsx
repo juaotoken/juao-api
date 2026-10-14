@@ -101,6 +101,9 @@ function RoutingPolicyEditor(props: { config: PolicyConfig }) {
         if (key === 'AutomaticRetryStatusCodes') {
           return value !== parseHttpStatusCodeRules(previous).normalized
         }
+        if (key === 'GroupRetryOverrides') {
+          return value !== routingPolicyOptions(defaults).GroupRetryOverrides
+        }
         return value !== previous
       })
     )

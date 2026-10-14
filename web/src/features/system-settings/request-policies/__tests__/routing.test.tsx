@@ -57,24 +57,22 @@ beforeEach(() => {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   })
   currentOptions = { ...options }
-  vi.spyOn(api, 'get').mockImplementation(async (url) => ({
-    data: {
-      success: true,
-      data:
-        url === '/api/option/request_policy'
-          ? {
-              options: currentOptions,
-            }
-          : {
-              enabled: true,
-              total: 2,
-              unknown: 0,
-              by_rule_name: { 'Session rule': 2 },
-              cache_capacity: 100000,
-              cache_algo: 'lru',
-            },
-    },
-  }))
+  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+    let data: unknown = {
+      enabled: true,
+      total: 2,
+      unknown: 0,
+      by_rule_name: { 'Session rule': 2 },
+      cache_capacity: 100000,
+      cache_algo: 'lru',
+    }
+    if (url === '/api/option/request_policy') {
+      data = { options: currentOptions }
+    } else if (url === '/api/group/') {
+      data = ['auto', 'default', '非直连-CC-MAX', 'Gemini（非直连）']
+    }
+    return { data: { success: true, data } }
+  })
   vi.spyOn(api, 'patch').mockImplementation(async (_url, request) => {
     currentOptions = {
       ...currentOptions,
@@ -795,3 +793,41 @@ it.each([
     expect(api.patch).not.toHaveBeenCalled()
   }
 )
+
+it('edits per-group retry settings, excludes the auto group and saves one JSON option', async () => {
+  currentOptions.GroupRetryOverrides = JSON.stringify({
+    'Gemini（非直连）': { status_codes: '502' },
+  })
+  show()
+  const card = await screen.findByText('Per-group retry settings')
+  const section = card.closest('.space-y-3') as HTMLElement
+  expect(within(section).getByDisplayValue('502')).toBeVisible()
+
+  await userEvent.click(
+    within(section).getByRole('button', { name: 'Add group' })
+  )
+  const triggers = within(section).getAllByRole('combobox')
+  await userEvent.click(triggers.at(-1) as HTMLElement)
+  const listbox = await screen.findByRole('listbox')
+  expect(within(listbox).queryByRole('option', { name: 'auto' })).toBeNull()
+  expect(
+    within(listbox).queryByRole('option', { name: 'Gemini（非直连）' })
+  ).toBeNull()
+  await userEvent.click(
+    within(listbox).getByRole('option', { name: '非直连-CC-MAX' })
+  )
+  const retryInputs = within(section).getAllByPlaceholderText('Global')
+  await userEvent.type(retryInputs[2], '4')
+  await userEvent.type(retryInputs[3], '429，500-599')
+
+  await userEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+  await waitFor(() => expect(api.patch).toHaveBeenCalledTimes(1))
+  const payload = vi.mocked(api.patch).mock.calls[0][1] as {
+    options: Record<string, string>
+  }
+  expect(Object.keys(payload.options)).toEqual(['GroupRetryOverrides'])
+  expect(JSON.parse(payload.options.GroupRetryOverrides)).toEqual({
+    'Gemini（非直连）': { status_codes: '502' },
+    '非直连-CC-MAX': { retry_times: 4, status_codes: '429,500-599' },
+  })
+})

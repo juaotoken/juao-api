@@ -30,7 +30,23 @@ type RequestPolicySnapshot struct {
 	CheckText       bool
 	TextKeywords    []string
 	AutoDisable     bool
-	Options         map[string]string
+	// GroupRetry 是按分组覆盖的重试设置（键为定价分组名，不含 auto）。
+	GroupRetry map[string]GroupRetryPolicy
+	Options    map[string]string
+}
+
+// GroupRetryOverride 是 GroupRetryOverrides 选项里单个分组的原始配置。
+// 字段留空表示沿用全局设置。
+type GroupRetryOverride struct {
+	RetryTimes  *int   `json:"retry_times,omitempty"`
+	StatusCodes string `json:"status_codes,omitempty"`
+}
+
+// GroupRetryPolicy 是校验后的分组重试设置。RetryTimes 为 nil、RetryCodes 为 nil
+// 分别表示重试次数、自动重试状态码沿用全局设置。
+type GroupRetryPolicy struct {
+	RetryTimes *int
+	RetryCodes []operation_setting.StatusCodeRange
 }
 
 var requestPolicySnapshot atomic.Pointer[RequestPolicySnapshot]
@@ -53,6 +69,7 @@ func requestPolicyDefaultOptions() map[string]string {
 	}
 	defaults["RetryTimes"] = strconv.Itoa(common.RetryTimes)
 	defaults["AutomaticRetryStatusCodes"] = operation_setting.AutomaticRetryStatusCodesToString()
+	defaults["GroupRetryOverrides"] = "{}"
 	defaults["AutomaticDisableStatusCodes"] = operation_setting.AutomaticDisableStatusCodesToString()
 	defaults["AutomaticDisableKeywords"] = operation_setting.AutomaticDisableKeywordsToString()
 	defaults["AutomaticDisableChannelEnabled"] = strconv.FormatBool(common.AutomaticDisableChannelEnabled)
@@ -69,7 +86,7 @@ func IsRequestPolicyOption(key string) bool {
 		return true
 	}
 	switch key {
-	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
+	case "CheckSensitiveEnabled", "CheckSensitiveOnPromptEnabled", "SensitiveWords", "AutomaticEnableChannelEnabled", "ChannelDisableThreshold", "monitor_setting.auto_test_channel_enabled", "monitor_setting.auto_test_channel_minutes", "monitor_setting.channel_test_concurrency", "monitor_setting.channel_test_mode", "RetryTimes", "AutomaticRetryStatusCodes", "GroupRetryOverrides", "AutomaticDisableChannelEnabled", "AutomaticDisableStatusCodes", "AutomaticDisableKeywords":
 		return true
 	}
 	return false
@@ -129,6 +146,10 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 	snapshot.RetryTimes, err = strconv.Atoi(raw["RetryTimes"])
 	if err != nil || snapshot.RetryTimes < 0 || snapshot.RetryTimes == math.MaxInt {
 		return nil, fmt.Errorf("retry times must be a non-negative integer with room for the initial attempt")
+	}
+	snapshot.GroupRetry, err = parseGroupRetryOverrides(raw["GroupRetryOverrides"])
+	if err != nil {
+		return nil, err
 	}
 	snapshot.AutoDisable, err = strconv.ParseBool(raw["AutomaticDisableChannelEnabled"])
 	if err != nil {
@@ -200,6 +221,39 @@ func BuildRequestPolicy(options map[string]string) (*RequestPolicySnapshot, erro
 		}
 	}
 	return snapshot, nil
+}
+
+// parseGroupRetryOverrides 校验按分组覆盖的重试设置。auto 分组按设计只走全局设置
+// （它在多个分组间跨组重试，单一分组的预算无从套用），因此拒绝配置。
+// 不校验分组是否仍存在于分组定价中：分组被删掉后其覆盖项只是不再命中，
+// 不应让整份请求策略加载失败。
+func parseGroupRetryOverrides(value string) (map[string]GroupRetryPolicy, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	var overrides map[string]GroupRetryOverride
+	if err := common.UnmarshalJsonStr(value, &overrides); err != nil {
+		return nil, fmt.Errorf("invalid group retry overrides: %w", err)
+	}
+	policies := make(map[string]GroupRetryPolicy, len(overrides))
+	for group, override := range overrides {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			return nil, fmt.Errorf("group retry overrides: group name is required")
+		}
+		if group == "auto" {
+			return nil, fmt.Errorf("group retry overrides: the auto group always uses the global retry settings")
+		}
+		if override.RetryTimes != nil && (*override.RetryTimes < 0 || *override.RetryTimes == math.MaxInt) {
+			return nil, fmt.Errorf("group retry overrides: retry times for group %q must be a non-negative integer", group)
+		}
+		codes, err := operation_setting.ParseHTTPStatusCodeRanges(override.StatusCodes)
+		if err != nil {
+			return nil, fmt.Errorf("group retry overrides: status codes for group %q: %w", group, err)
+		}
+		policies[group] = GroupRetryPolicy{RetryTimes: override.RetryTimes, RetryCodes: codes}
+	}
+	return policies, nil
 }
 
 func refreshRequestPolicySnapshot() error {

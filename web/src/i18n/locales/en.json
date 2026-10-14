@@ -6788,6 +6788,14 @@
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.",
     "Raw request body length": "Raw request body length",
     "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.",
-    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only."
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.",
+    "Per-group retry settings": "Per-group retry settings",
+    "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.": "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.",
+    "Global": "Global",
+    "Remove group {{group}}": "Remove group {{group}}",
+    "The auto group always uses the global retry settings": "The auto group always uses the global retry settings",
+    "Enter an integer from 0 to 99, or leave empty": "Enter an integer from 0 to 99, or leave empty",
+    "This group is already configured": "This group is already configured",
+    "Group retry setting": "Group retry setting"
   }
 }

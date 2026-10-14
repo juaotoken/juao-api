@@ -16,6 +16,30 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// groupRetryPolicy 返回本次请求所用分组的独立重试设置。
+// 分组取令牌/用户实际使用的分组（ContextKeyUsingGroup）；auto 分组在这里始终是
+// 字面量 "auto"（自动选中的子分组只写进 relayInfo），因此 auto 请求永远走全局设置。
+func groupRetryPolicy(c *gin.Context) (model.GroupRetryPolicy, bool) {
+	if c == nil {
+		return model.GroupRetryPolicy{}, false
+	}
+	group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	if group == "" || group == "auto" {
+		return model.GroupRetryPolicy{}, false
+	}
+	policy, ok := model.CurrentRequestPolicy().GroupRetry[group]
+	return policy, ok
+}
+
+// RequestRetryTimes 返回本次请求的最大重试次数：分组配置了独立重试次数时用它，
+// 否则用全局 RetryTimes。
+func RequestRetryTimes(c *gin.Context) int {
+	if policy, ok := groupRetryPolicy(c); ok && policy.RetryTimes != nil {
+		return *policy.RetryTimes
+	}
+	return common.RetryTimes
+}
+
 // DecideRelayRetry is the single retry decision for relay attempts. The reason
 // is recorded in the request policy decision events of the log details.
 func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) PolicyDecision {
@@ -38,8 +62,13 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	if types.IsSkipRetryError(err) {
 		return PolicyDecision{Action: "stop", Reason: "non_retryable_error", Source: "system"}
 	}
+	groupPolicy, hasGroupPolicy := groupRetryPolicy(c)
 	if retryTimes <= 0 {
-		return PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: "global"}
+		source := "global"
+		if hasGroupPolicy && groupPolicy.RetryTimes != nil {
+			source = "group"
+		}
+		return PolicyDecision{Action: "stop", Reason: "attempt_budget_exhausted", Source: source}
 	}
 	code := err.StatusCode
 	if code >= 200 && code < 300 {
@@ -50,6 +79,12 @@ func DecideRelayRetry(c *gin.Context, err *types.NewAPIError, retryTimes int) Po
 	}
 	if operation_setting.IsAlwaysSkipRetryCode(err.GetErrorCode()) || operation_setting.IsAlwaysSkipRetryStatusCode(code) {
 		return PolicyDecision{Action: "stop", Reason: "system_retry_exclusion", Source: "system"}
+	}
+	if hasGroupPolicy && groupPolicy.RetryCodes != nil {
+		if operation_setting.ShouldRetryByStatusCodeRanges(groupPolicy.RetryCodes, code) {
+			return PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "group"}
+		}
+		return PolicyDecision{Action: "stop", Reason: "status_not_retryable", Source: "group"}
 	}
 	if operation_setting.ShouldRetryByStatusCode(code) {
 		return PolicyDecision{Action: "retry", Reason: "retry_status_matched", Source: "global"}

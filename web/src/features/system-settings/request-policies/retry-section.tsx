@@ -16,9 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useFormContext } from 'react-hook-form'
+import { useQuery } from '@tanstack/react-query'
+import { Plus, Trash2 } from 'lucide-react'
+import { useFieldArray, useFormContext, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import {
   FormControl,
   FormDescription,
@@ -28,6 +31,16 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import { getGroups } from '@/features/users/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import { SettingsCard } from '../components/settings-card'
 import { safeNumberFieldProps } from '../utils/numeric-field'
@@ -74,13 +87,161 @@ export function RetrySection() {
                 />
               </FormControl>
               <FormDescription>
-                {t('2xx is always excluded. 504/524 follow the configured ranges.')}
+                {t(
+                  '2xx is always excluded. 504/524 follow the configured ranges.'
+                )}
               </FormDescription>
               <FormMessage />
             </FormItem>
           )}
         />
+        <GroupRetryOverrides />
       </div>
     </SettingsCard>
+  )
+}
+
+// Per-group overrides of the retry budget above. Only pricing groups can be
+// chosen; the auto group is excluded because it retries across groups and
+// always follows the global settings.
+function GroupRetryOverrides() {
+  const { t } = useTranslation()
+  const form = useFormContext<RoutingPolicyFormValues>()
+  const overrides = useFieldArray({
+    control: form.control,
+    name: 'GroupRetryOverrides',
+  })
+  const rows = useWatch({ control: form.control, name: 'GroupRetryOverrides' })
+  const groupsQuery = useQuery({
+    queryKey: ['request-policy', 'pricing-groups'],
+    queryFn: async () => {
+      const groups = requireServerSuccess(await getGroups()).data
+      return Array.isArray(groups) ? groups : []
+    },
+  })
+  const groups = (groupsQuery.data ?? [])
+    .filter((group) => group !== 'auto')
+    .sort((a, b) => a.localeCompare(b))
+  const configured = new Set((rows ?? []).map((row) => row.group))
+
+  return (
+    <div className='space-y-3'>
+      <div className='flex items-start justify-between gap-3'>
+        <div className='space-y-1'>
+          <h4 className='text-sm font-medium'>
+            {t('Per-group retry settings')}
+          </h4>
+          <p className='text-muted-foreground text-xs'>
+            {t(
+              'Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.'
+            )}
+          </p>
+        </div>
+        <Button
+          type='button'
+          variant='outline'
+          size='sm'
+          onClick={() =>
+            overrides.append({ group: '', retry_times: '', status_codes: '' })
+          }
+        >
+          <Plus aria-hidden='true' data-icon='inline-start' />
+          {t('Add group')}
+        </Button>
+      </div>
+      {overrides.fields.map((item, index) => {
+        const current = rows?.[index]?.group ?? ''
+        const options = groups.filter(
+          (group) => group === current || !configured.has(group)
+        )
+        // A group deleted from group pricing keeps its row so it can be removed.
+        if (current !== '' && !options.includes(current)) {
+          options.unshift(current)
+        }
+        return (
+          <div
+            key={item.id}
+            className='grid gap-3 rounded-md border p-3 md:grid-cols-[minmax(0,1.2fr)_minmax(0,0.6fr)_minmax(0,1.4fr)_auto]'
+          >
+            <FormField
+              control={form.control}
+              name={`GroupRetryOverrides.${index}.group`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Group')}</FormLabel>
+                  <Select
+                    items={options.map((group) => ({
+                      value: group,
+                      label: group,
+                    }))}
+                    value={field.value || null}
+                    onValueChange={(value) => field.onChange(value ?? '')}
+                  >
+                    <FormControl>
+                      <SelectTrigger className='w-full'>
+                        <SelectValue placeholder={t('Select a group')} />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {options.map((group) => (
+                          <SelectItem key={group} value={group}>
+                            {group}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name={`GroupRetryOverrides.${index}.retry_times`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Maximum retries')}</FormLabel>
+                  <FormControl>
+                    <Input
+                      {...field}
+                      inputMode='numeric'
+                      placeholder={t('Global')}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <FormField
+              control={form.control}
+              name={`GroupRetryOverrides.${index}.status_codes`}
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Auto-retry status codes')}</FormLabel>
+                  <FormControl>
+                    <Input {...field} placeholder={t('Global')} />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+            <div className='flex items-end'>
+              <Button
+                type='button'
+                variant='ghost'
+                size='icon'
+                aria-label={t('Remove group {{group}}', {
+                  group: current || index + 1,
+                })}
+                onClick={() => overrides.remove(index)}
+              >
+                <Trash2 aria-hidden='true' />
+              </Button>
+            </div>
+          </div>
+        )
+      })}
+    </div>
   )
 }

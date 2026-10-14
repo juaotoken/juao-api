@@ -5185,7 +5185,7 @@
     "Select a color": "Выбрать цвет",
     "Select a complete plan, then keep only the routes you need.": "Выберите полную схему, затем оставьте только нужные маршруты.",
     "Select a concrete model to configure pricing. Metadata matching does not propagate prices.": "Выберите конкретную модель для настройки цены. Сопоставление метаданных не распространяет цены.",
-    "Select a group": "Выбрать группу",
+    "Select a group": "Выберите группу",
     "Select a group type": "Выбрать тип группы",
     "Select a model to edit pricing": "Выберите модель для редактирования тарифа",
     "Select a preset...": "Выберите предустановку...",
@@ -6788,6 +6788,14 @@
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} из {{total}} настроек были сохранены до сбоя. Проверьте оставшиеся настройки и повторите попытку.",
     "Raw request body length": "Длина тела исходного запроса",
     "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Сколько символов тела запроса сохранять, не более {{max}}. Если одна только структура полей длиннее, она сохраняется в фактической длине.",
-    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Сохранять тело клиентского запроса и HTTP-заголовки при первой неудачной попытке запроса к вышестоящему сервису, чтобы разбирать отказы. В длинных телах сохраняются все поля, сокращаются только значения содержимого. Видно только администраторам."
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Сохранять тело клиентского запроса и HTTP-заголовки при первой неудачной попытке запроса к вышестоящему сервису, чтобы разбирать отказы. В длинных телах сохраняются все поля, сокращаются только значения содержимого. Видно только администраторам.",
+    "Per-group retry settings": "Настройки повторов по группам",
+    "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.": "Переопределяет число повторов и коды статуса для отдельных ценовых групп. Пустые поля берут глобальные значения выше. Группа auto всегда использует глобальные настройки.",
+    "Global": "Глобально",
+    "Remove group {{group}}": "Удалить группу {{group}}",
+    "The auto group always uses the global retry settings": "Группа auto всегда использует глобальные настройки повторов",
+    "Enter an integer from 0 to 99, or leave empty": "Введите целое число от 0 до 99 или оставьте пустым",
+    "This group is already configured": "Эта группа уже настроена",
+    "Group retry setting": "Настройка группы"
   }
 }

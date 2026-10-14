@@ -116,6 +116,15 @@ func ShouldRetryByStatusCode(code int) bool {
 	return shouldMatchStatusCodeRanges(AutomaticRetryStatusCodeRanges, code)
 }
 
+// ShouldRetryByStatusCodeRanges 与 ShouldRetryByStatusCode 相同，但按给定区间判定
+// （用于分组独立配置的自动重试状态码）。
+func ShouldRetryByStatusCodeRanges(ranges []StatusCodeRange, code int) bool {
+	if IsAlwaysSkipRetryStatusCode(code) {
+		return false
+	}
+	return shouldMatchStatusCodeRanges(ranges, code)
+}
+
 func statusCodeRangesToString(ranges []StatusCodeRange) string {
 	if len(ranges) == 0 {
 		return ""

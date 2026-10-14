@@ -5185,7 +5185,7 @@
     "Select a color": "Chọn một màu",
     "Select a complete plan, then keep only the routes you need.": "Chọn cấu hình đầy đủ, sau đó chỉ giữ các route cần thiết.",
     "Select a concrete model to configure pricing. Metadata matching does not propagate prices.": "Chọn mô hình cụ thể để cấu hình giá. Việc khớp siêu dữ liệu không lan truyền giá.",
-    "Select a group": "Chọn một nhóm",
+    "Select a group": "Chọn nhóm",
     "Select a group type": "Chọn loại nhóm",
     "Select a model to edit pricing": "Chọn mô hình để chỉnh sửa giá",
     "Select a preset...": "Chọn cấu hình sẵn...",
@@ -6788,6 +6788,14 @@
     "{{saved}} of {{total}} settings were saved before the failure. Review the remaining settings and try again.": "{{saved}} trong {{total}} cài đặt đã được lưu trước khi thất bại. Hãy kiểm tra các cài đặt còn lại và thử lại.",
     "Raw request body length": "Độ dài thân yêu cầu gốc",
     "Characters of the request body to keep, up to {{max}}. When the field structure alone is longer, it is stored at its actual length.": "Số ký tự của thân yêu cầu được lưu, tối đa {{max}}. Nếu riêng cấu trúc trường đã dài hơn, sẽ lưu theo độ dài thực tế của cấu trúc.",
-    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Lưu thân yêu cầu của client và header HTTP ở lần gọi upstream thất bại đầu tiên của một yêu cầu để điều tra lý do bị từ chối. Thân dài sẽ giữ mọi trường và chỉ rút gọn giá trị nội dung. Chỉ quản trị viên nhìn thấy."
+    "Store the client request body and HTTP headers on the first failed upstream attempt of a request, so upstream rejections can be investigated. Long bodies keep every field and shorten only content values. Visible to administrators only.": "Lưu thân yêu cầu của client và header HTTP ở lần gọi upstream thất bại đầu tiên của một yêu cầu để điều tra lý do bị từ chối. Thân dài sẽ giữ mọi trường và chỉ rút gọn giá trị nội dung. Chỉ quản trị viên nhìn thấy.",
+    "Per-group retry settings": "Cài đặt thử lại theo nhóm",
+    "Override the retry count and status codes for specific pricing groups. Empty fields use the global values above. The auto group always uses the global settings.": "Ghi đè số lần thử lại và mã trạng thái cho từng nhóm giá. Trường để trống dùng giá trị toàn cục ở trên. Nhóm auto luôn dùng cài đặt toàn cục.",
+    "Global": "Toàn cục",
+    "Remove group {{group}}": "Xóa nhóm {{group}}",
+    "The auto group always uses the global retry settings": "Nhóm auto luôn dùng cài đặt thử lại toàn cục",
+    "Enter an integer from 0 to 99, or leave empty": "Nhập số nguyên từ 0 đến 99 hoặc để trống",
+    "This group is already configured": "Nhóm này đã được cấu hình",
+    "Group retry setting": "Cài đặt nhóm"
   }
 }
