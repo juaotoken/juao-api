@@ -65,6 +65,13 @@ const (
 
 )
 
+// ChannelTypeVolcVideo is intentionally numbered far above the contiguous
+// community numbering (1..63) to avoid collisions with future upstream
+// channel types. Loops over 1..Dummy keep their existing extent; VolcVideo
+// is a task-only channel and opts in wherever the type is enumerated
+// explicitly.
+const ChannelTypeVolcVideo = 500
+
 // ChannelBaseURLs 保存各渠道类型的内置默认 Base URL。
 // 非空值会通过 /api/channel/default_base_urls 下发到前端，作为渠道表单的 API 地址占位提示。
 var ChannelBaseURLs = []string{
@@ -202,6 +209,7 @@ var ChannelTypeNames = map[int]string{
 	ChannelTypeTaskPlugin:     "Task Plugin",
 	ChannelTypeVLLM:           "vLLM",
 	ChannelTypeSGLang:         "SGLang",
+	ChannelTypeVolcVideo:      "Volcengine Video",
 }
 
 func GetChannelTypeName(channelType int) string {

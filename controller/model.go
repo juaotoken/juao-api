@@ -32,6 +32,17 @@ var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
 
+// enumeratedChannelTypes lists every channel type that model listing must
+// visit: the contiguous community range 1..ChannelTypeDummy plus task-only
+// channel types numbered far outside that range (see ChannelTypeVolcVideo).
+func enumeratedChannelTypes() []int {
+	types := make([]int, 0, constant.ChannelTypeDummy+1)
+	for i := 1; i <= constant.ChannelTypeDummy; i++ {
+		types = append(types, i)
+	}
+	return append(types, constant.ChannelTypeVolcVideo)
+}
+
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
 	for i := range constant.APITypeDummy {
@@ -95,7 +106,7 @@ func init() {
 		openAIModelsMap[aiModel.Id] = aiModel
 	}
 	channelId2Models = make(map[int][]string)
-	for i := 1; i <= constant.ChannelTypeDummy; i++ {
+	for _, i := range enumeratedChannelTypes() {
 		apiType, success := common.ChannelType2APIType(i)
 		if !success || apiType == constant.APITypeAIProxyLibrary {
 			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
@@ -327,7 +338,7 @@ func DashboardListModels(c *gin.Context) {
 	for channelType, models := range channelId2Models {
 		modelsByChannel[channelType] = append([]string(nil), models...)
 	}
-	for channelType := 1; channelType <= constant.ChannelTypeDummy; channelType++ {
+	for _, channelType := range enumeratedChannelTypes() {
 		if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(channelType); ok {
 			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
 		}
