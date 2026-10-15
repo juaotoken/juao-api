@@ -80,6 +80,10 @@ func (a *Adaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.
 		}
 	}
 
+	if taskErr := checkVolcAssetReferences(body, info); taskErr != nil {
+		return taskErr
+	}
+
 	a.requestBody = body
 
 	info.Action = constant.TaskActionTextToVideo
@@ -98,6 +102,43 @@ func (a *Adaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.
 		info.OriginModelName = modelName
 	}
 
+	return nil
+}
+
+// checkVolcAssetReferences enforces asset:// ownership on every submit route
+// and retry attempt, independent of the pin middleware: every referenced
+// logical asset must belong to the caller and to the channel serving this
+// attempt, and that channel must be single-key because a logical asset lives
+// in exactly one upstream account.
+func checkVolcAssetReferences(body map[string]any, info *relaycommon.RelayInfo) *dto.TaskError {
+	logicalIDs := model.CollectVolcAssetReferences(body)
+	if len(logicalIDs) == 0 {
+		return nil
+	}
+	if len(logicalIDs) > model.MaxVolcAssetReferences {
+		return service.TaskErrorWrapperLocal(errors.New("too many asset references"), "invalid_asset_reference", http.StatusBadRequest)
+	}
+	if info.HasChannelMeta() && info.ChannelIsMultiKey {
+		return service.TaskErrorWrapperLocal(errors.New("Volcengine assets require a single-key channel"), "invalid_asset_reference", http.StatusBadRequest)
+	}
+	assets, err := model.GetVolcAssetsByLogicalIDs(info.UserId, logicalIDs)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(fmt.Errorf("load volcengine assets failed: %w", err), "database_error", http.StatusInternalServerError)
+	}
+	owned := make(map[string]int, len(assets))
+	for _, asset := range assets {
+		owned[asset.LogicalID] = asset.ChannelID
+	}
+	channelID := info.GetChannelID()
+	for _, logicalID := range logicalIDs {
+		assetChannelID, ok := owned[logicalID]
+		if !ok {
+			return service.TaskErrorWrapperLocal(errors.New("asset reference not found: "+logicalID), "invalid_asset_reference", http.StatusBadRequest)
+		}
+		if assetChannelID != channelID {
+			return service.TaskErrorWrapperLocal(errors.New("referenced assets belong to another channel"), "invalid_asset_reference", http.StatusBadRequest)
+		}
+	}
 	return nil
 }
 

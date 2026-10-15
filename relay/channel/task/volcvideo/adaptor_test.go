@@ -14,8 +14,10 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func newTestContext(t *testing.T, body map[string]any) *gin.Context {
@@ -102,6 +104,62 @@ func TestValidateRequestAndSetAction(t *testing.T) {
 			}
 			require.Nil(t, taskErr)
 			assert.Equal(t, tc.wantAction, info.Action)
+		})
+	}
+}
+
+func TestValidateRequestAssetOwnership(t *testing.T) {
+	previousDB := model.DB
+	t.Cleanup(func() { model.DB = previousDB })
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, database.AutoMigrate(&model.VolcAsset{}))
+	model.DB = database
+	for _, asset := range []*model.VolcAsset{
+		{LogicalID: "la_own", UserID: 7, ChannelID: 1},
+		{LogicalID: "la_other_channel", UserID: 7, ChannelID: 2},
+		{LogicalID: "la_foreign", UserID: 8, ChannelID: 1},
+	} {
+		require.NoError(t, asset.Insert())
+	}
+
+	withImage := func(image map[string]any) map[string]any {
+		return map[string]any{"model": "doubao-seedance-2-0", "content": []any{
+			map[string]any{"type": "text", "text": "a cat"},
+			image,
+		}}
+	}
+	cases := []struct {
+		name      string
+		body      map[string]any
+		multiKey  bool
+		wantError string
+	}{
+		{name: "owned asset on the serving channel", body: withImage(map[string]any{"type": "image_url", "image_url": map[string]any{"url": "asset://la_own"}})},
+		{name: "owned asset on another channel", body: withImage(map[string]any{"type": "image_url", "image_url": map[string]any{"url": "asset://la_other_channel"}}), wantError: "referenced assets belong to another channel"},
+		{name: "another user's asset", body: withImage(map[string]any{"type": "image_url", "image_url": map[string]any{"url": "asset://la_foreign"}}), wantError: "asset reference not found: la_foreign"},
+		{name: "uppercase key is still checked", body: withImage(map[string]any{"type": "image_url", "IMAGE_URL": map[string]any{"URL": "Asset://la_foreign"}}), wantError: "asset reference not found: la_foreign"},
+		{name: "nested object is still checked", body: withImage(map[string]any{"type": "image_url", "extra": map[string]any{"refs": []any{"asset://la_other_channel"}}}), wantError: "referenced assets belong to another channel"},
+		{name: "multi-key channel rejects asset references", body: withImage(map[string]any{"type": "image_url", "image_url": map[string]any{"url": "asset://la_own"}}), multiKey: true, wantError: "single-key channel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestContext(t, tc.body)
+			info := &relaycommon.RelayInfo{
+				UserId:        7,
+				ChannelMeta:   &relaycommon.ChannelMeta{ChannelId: 1, ChannelIsMultiKey: tc.multiKey},
+				TaskRelayInfo: &relaycommon.TaskRelayInfo{},
+			}
+			taskErr := (&Adaptor{}).ValidateRequestAndSetAction(c, info)
+			if tc.wantError == "" {
+				require.Nil(t, taskErr)
+				assert.Equal(t, constant.TaskActionImageToVideo, info.Action)
+				return
+			}
+			require.NotNil(t, taskErr)
+			assert.Equal(t, http.StatusBadRequest, taskErr.StatusCode)
+			assert.True(t, taskErr.LocalError, "ownership rejections must not be retried or penalize the channel")
+			assert.Contains(t, taskErr.Message, tc.wantError)
 		})
 	}
 }

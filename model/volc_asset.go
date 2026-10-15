@@ -2,6 +2,9 @@ package model
 
 import (
 	"errors"
+	"maps"
+	"slices"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -25,6 +28,55 @@ type VolcAsset struct {
 	Status         string `json:"status" gorm:"type:varchar(32)"`
 	CreatedAt      int64  `json:"created_at" gorm:"bigint"`
 	UpdatedAt      int64  `json:"updated_at" gorm:"bigint"`
+}
+
+const (
+	// MaxVolcAssetReferences bounds how many distinct asset:// references a
+	// single video submission may carry.
+	MaxVolcAssetReferences = 100
+
+	volcAssetURLPrefix         = "asset://"
+	maxVolcAssetReferenceDepth = 64
+)
+
+// CollectVolcAssetReferences walks a decoded JSON value (maps and slices, at
+// any depth up to a fixed bound) and returns the logical IDs of every string
+// that starts with "asset://" (case-insensitive, surrounding whitespace
+// ignored), deduplicated in first-seen order. Map keys are visited in sorted
+// order so the result is deterministic. It does not depend on field names, so
+// case-variant or nested keys cannot smuggle an unchecked reference upstream.
+func CollectVolcAssetReferences(value any) []string {
+	ids := make([]string, 0)
+	seen := make(map[string]struct{})
+	collectVolcAssetReferences(value, 0, seen, &ids)
+	return ids
+}
+
+func collectVolcAssetReferences(value any, depth int, seen map[string]struct{}, ids *[]string) {
+	if depth > maxVolcAssetReferenceDepth {
+		return
+	}
+	switch v := value.(type) {
+	case string:
+		text := strings.TrimSpace(v)
+		if len(text) < len(volcAssetURLPrefix) || !strings.EqualFold(text[:len(volcAssetURLPrefix)], volcAssetURLPrefix) {
+			return
+		}
+		logicalID := strings.TrimSpace(text[len(volcAssetURLPrefix):])
+		if _, dup := seen[logicalID]; dup {
+			return
+		}
+		seen[logicalID] = struct{}{}
+		*ids = append(*ids, logicalID)
+	case map[string]any:
+		for _, key := range slices.Sorted(maps.Keys(v)) {
+			collectVolcAssetReferences(v[key], depth+1, seen, ids)
+		}
+	case []any:
+		for _, item := range v {
+			collectVolcAssetReferences(item, depth+1, seen, ids)
+		}
+	}
 }
 
 // GetEnabledChannelsByType returns every enabled channel of channelType. It is

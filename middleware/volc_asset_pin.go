@@ -3,7 +3,6 @@ package middleware
 import (
 	"io"
 	"net/http"
-	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -12,11 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
-)
-
-const (
-	volcAssetURLPrefix     = "asset://"
-	maxVolcAssetReferences = 100
 )
 
 // VolcAssetChannelPin pins a Volcengine Video submission that references
@@ -50,39 +44,14 @@ func VolcAssetChannelPin() gin.HandlerFunc {
 			c.Next()
 			return
 		}
-		content, _ := body["content"].([]any)
-		logicalIDs := make([]string, 0)
-		seen := make(map[string]struct{})
-		for _, item := range content {
-			part, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			for _, field := range []string{"image_url", "video_url", "audio_url"} {
-				// Accept the bare-string form too, so an alternative shape
-				// cannot carry an unchecked asset reference upstream.
-				url, isString := part[field].(string)
-				if !isString {
-					media, _ := part[field].(map[string]any)
-					url, _ = media["url"].(string)
-				}
-				url = strings.TrimSpace(url)
-				if len(url) < len(volcAssetURLPrefix) || !strings.EqualFold(url[:len(volcAssetURLPrefix)], volcAssetURLPrefix) {
-					continue
-				}
-				logicalID := url[len(volcAssetURLPrefix):]
-				if _, dup := seen[logicalID]; dup {
-					continue
-				}
-				seen[logicalID] = struct{}{}
-				logicalIDs = append(logicalIDs, logicalID)
-			}
-		}
+		// Collect references anywhere in the body, under any key spelling,
+		// so a case-variant or nested field cannot bypass ownership.
+		logicalIDs := model.CollectVolcAssetReferences(body)
 		if len(logicalIDs) == 0 {
 			c.Next()
 			return
 		}
-		if len(logicalIDs) > maxVolcAssetReferences {
+		if len(logicalIDs) > model.MaxVolcAssetReferences {
 			abortWithOpenAiMessage(c, http.StatusBadRequest, "too many asset references")
 			return
 		}
@@ -109,6 +78,12 @@ func VolcAssetChannelPin() gin.HandlerFunc {
 				return
 			}
 			channelID = assetChannelID
+		}
+		// A multi-key channel may hold keys of distinct upstream accounts,
+		// and a logical asset exists in only one of them.
+		if channelInfo, err := model.CacheGetChannelInfo(channelID); err == nil && channelInfo.IsMultiKey {
+			abortWithOpenAiMessage(c, http.StatusBadRequest, "Volcengine assets require a single-key channel")
+			return
 		}
 
 		modelName, _ := body["model"].(string)

@@ -51,7 +51,8 @@ func TestVolcAssetChannelPin(t *testing.T) {
 	channelA := &model.Channel{Type: constant.ChannelTypeVolcVideo, Key: "a", Status: common.ChannelStatusEnabled, Name: "volc-a", Models: modelName, Group: "default"}
 	channelB := &model.Channel{Type: constant.ChannelTypeVolcVideo, Key: "b", Status: common.ChannelStatusEnabled, Name: "volc-b", Models: modelName, Group: "default"}
 	channelVIP := &model.Channel{Type: constant.ChannelTypeVolcVideo, Key: "v", Status: common.ChannelStatusEnabled, Name: "volc-vip", Models: modelName, Group: "vip"}
-	for _, channel := range []*model.Channel{channelA, channelB, channelVIP} {
+	channelMulti := &model.Channel{Type: constant.ChannelTypeVolcVideo, Key: "m1\nm2", Status: common.ChannelStatusEnabled, Name: "volc-multi", Models: modelName, Group: "default", ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2}}
+	for _, channel := range []*model.Channel{channelA, channelB, channelVIP, channelMulti} {
 		require.NoError(t, database.Create(channel).Error)
 		require.NoError(t, channel.AddAbilities(nil))
 	}
@@ -61,6 +62,7 @@ func TestVolcAssetChannelPin(t *testing.T) {
 		{LogicalID: "asset-b1", UserID: 7, ChannelID: channelB.Id},
 		{LogicalID: "asset-vip", UserID: 7, ChannelID: channelVIP.Id},
 		{LogicalID: "asset-foreign", UserID: 8, ChannelID: channelA.Id},
+		{LogicalID: "asset-multi", UserID: 7, ChannelID: channelMulti.Id},
 	} {
 		require.NoError(t, asset.Insert())
 	}
@@ -88,6 +90,9 @@ func TestVolcAssetChannelPin(t *testing.T) {
 		{name: "video references are checked too", body: `{"model":"` + modelName + `","content":[{"type":"video_url","video_url":{"url":"asset://asset-foreign"}}]}`, wantStatus: http.StatusBadRequest, wantError: "asset reference not found: asset-foreign"},
 		{name: "another user's asset is rejected", body: body("asset://asset-a1", "asset://asset-foreign"), wantStatus: http.StatusBadRequest, wantError: "asset reference not found: asset-foreign"},
 		{name: "assets on two channels are rejected", body: body("asset://asset-a1", "asset://asset-b1"), wantStatus: http.StatusBadRequest, wantError: "referenced assets belong to different channels"},
+		{name: "uppercase key reference is pinned", body: `{"model":"` + modelName + `","content":[{"type":"image_url","IMAGE_URL":{"URL":"ASSET://asset-a1"}}]}`, wantStatus: http.StatusOK, wantPin: channelA.Id},
+		{name: "nested foreign reference under a variant key is rejected", body: `{"model":"` + modelName + `","content":[{"type":"text","text":"x"}],"Extra":{"refs":["asset://asset-foreign"]}}`, wantStatus: http.StatusBadRequest, wantError: "asset reference not found: asset-foreign"},
+		{name: "assets on a multi-key channel are rejected", body: body("asset://asset-multi"), wantStatus: http.StatusBadRequest, wantError: "single-key channel"},
 		{name: "token model limit still applies", body: body("asset://asset-a1"), modelLimit: map[string]bool{"other-model": true}, wantStatus: http.StatusForbidden},
 		{name: "channel outside the caller's group is rejected", body: body("asset://asset-vip"), wantStatus: http.StatusForbidden, wantError: "not available for your group/model"},
 	}

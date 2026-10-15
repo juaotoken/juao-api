@@ -3,6 +3,7 @@ package model
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -67,4 +68,27 @@ func TestVolcAssetOwnershipAndListing(t *testing.T) {
 	owned, err = GetVolcAsset(1, "la_1")
 	require.NoError(t, err)
 	assert.Nil(t, owned)
+}
+
+func TestCollectVolcAssetReferences(t *testing.T) {
+	var body map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(`{
+		"model": "m",
+		"content": [
+			{"type": "text", "text": "asset://in-text"},
+			{"type": "image_url", "IMAGE_URL": {"URL": " ASSET://upper "}},
+			{"type": "video_url", "video_url": "asset://bare"},
+			{"nested": {"deeper": [["asset://deep"]]}},
+			{"image_url": {"url": "https://cdn.example/a.png"}},
+			{"image_url": {"url": "asset://upper"}}
+		]
+	}`, &body))
+	assert.Equal(t, []string{"in-text", "upper", "bare", "deep"}, CollectVolcAssetReferences(body))
+	assert.Empty(t, CollectVolcAssetReferences(map[string]any{"x": 1.0, "y": nil}))
+
+	var deep any = "asset://too-deep"
+	for range 100 {
+		deep = []any{deep}
+	}
+	assert.Empty(t, CollectVolcAssetReferences(deep), "references beyond the depth bound are not descended into")
 }
