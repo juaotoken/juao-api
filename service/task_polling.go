@@ -40,6 +40,12 @@ type BatchTaskPollingAdaptor interface {
 	ParseBatchResult(tasks []*model.Task, resp *http.Response, body []byte) (map[string]*BatchTaskResult, error)
 }
 
+// TaskDataSanitizer lets an adaptor reduce the stored poll snapshot to the
+// fields its users may see.
+type TaskDataSanitizer interface {
+	SanitizeTaskData(body []byte) []byte
+}
+
 const (
 	pollClassOK           = "ok"
 	pollClassOtherClient  = "other_client"
@@ -518,8 +524,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
+	//
+	// Volcengine Video (channel type 500) upstream answers in the very same
+	// {"code":"success","data":{...}} envelope shape that new-api's own
+	// TaskResponse[model.Task] decodes, so this branch would match it too —
+	// but model.Task doesn't decode the upstream's result_url (it lives in
+	// PrivateData) or total_tokens, so the result URL and billing tokens
+	// would be silently dropped. Route this channel type straight to the
+	// adaptor instead.
 	var responseItems taskdto.TaskResponse[model.Task]
-	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
+	isNewAPIResponse := ch.Type != constant.ChannelTypeVolcVideo
+	if isNewAPIResponse {
+		err = common.Unmarshal(responseBody, &responseItems)
+		isNewAPIResponse = err == nil && responseItems.IsSuccess()
+	}
+	if isNewAPIResponse {
 		logger.LogDebug(ctx, "updateVideoSingleTask parsed as new api response format: %+v", responseItems)
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
@@ -542,7 +561,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassUnrecognized, resp.StatusCode, unrecognizedPollDetail(taskResult.Reason, responseBody))
 	}
 
+	// Prefer an adaptor-provided sanitizer over the generic redaction below:
+	// some upstreams (e.g. Volcengine Video's reseller gateway) embed their
+	// own account/billing fields in the poll body, which redactVideoResponseBody
+	// does not know to strip.
 	task.Data = redactVideoResponseBody(responseBody)
+	if sanitizer, ok := adaptor.(TaskDataSanitizer); ok {
+		if sanitized := sanitizer.SanitizeTaskData(responseBody); sanitized != nil {
+			task.Data = sanitized
+		}
+	}
 	if len(taskResult.PluginState) > 0 {
 		task.PrivateData.PluginState = taskResult.PluginState
 	}

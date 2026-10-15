@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
+	"github.com/QuantumNous/new-api/relay/channel/task/volcvideo"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,6 +57,22 @@ export function parseTaskResult(ctx, body) { return {taskId: body.id, status: "S
 
 func TestGetTaskAdaptorReturnsNilForUnknownPlatform(t *testing.T) {
 	assert.Nil(t, GetTaskAdaptor(constant.TaskPlatform("missing-task-platform")))
+}
+
+// TestGetTaskAdaptorResolvesVolcVideoBeforePluginLookup proves that the
+// Go-native Volcengine Video adaptor (channel type 500, no JS plugin
+// counterpart) is resolved directly by both the generic and the
+// request-pinning task adaptor lookups.
+func TestGetTaskAdaptorResolvesVolcVideoBeforePluginLookup(t *testing.T) {
+	platform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcVideo))
+
+	_, isVolcVideo := GetTaskAdaptor(platform).(*volcvideo.Adaptor)
+	assert.True(t, isVolcVideo, "platform 500 should resolve to the volcvideo adaptor")
+
+	resolvedPlatform, adaptor := getTaskAdaptorForRequest(nil, platform)
+	assert.Equal(t, platform, resolvedPlatform)
+	_, isVolcVideo = adaptor.(*volcvideo.Adaptor)
+	assert.True(t, isVolcVideo, "platform 500 should resolve to the volcvideo adaptor via the request-pinning path")
 }
 
 func TestGetTaskAdaptorForRequestUsesExactPinnedPlugin(t *testing.T) {

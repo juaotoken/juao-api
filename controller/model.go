@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
+	"github.com/QuantumNous/new-api/relay/channel/task/volcvideo"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -111,6 +112,11 @@ func init() {
 		if !success || apiType == constant.APITypeAIProxyLibrary {
 			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
 				channelId2Models[i] = append([]string(nil), plugin.Meta.Models...)
+			} else if i == constant.ChannelTypeVolcVideo {
+				// Channel type 500 (Volcengine Video) has no JS plugin and no
+				// ChannelType2APIType mapping; its model list lives only on
+				// the Go-native task adaptor.
+				channelId2Models[i] = append([]string(nil), volcvideo.ModelList...)
 			}
 			continue
 		}
