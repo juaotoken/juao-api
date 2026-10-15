@@ -53,24 +53,8 @@ func Distribute() func(c *gin.Context) {
 		_, pinned, _ := constraints.ResolvedPin()
 		if !pinned {
 			// Select a channel for the user
-			// check token model mapping
-			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
-				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-				if !ok {
-					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
-					return
-				}
-				var tokenModelLimit map[string]bool
-				tokenModelLimit, ok = s.(map[string]bool)
-				if !ok {
-					tokenModelLimit = map[string]bool{}
-				}
-				if !TokenModelLimitAllows(tokenModelLimit, modelRequest.Model) {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
-					return
-				}
+			if !enforceTokenModelLimit(c, modelRequest.Model) {
+				return
 			}
 
 			if shouldSelectChannel {
@@ -508,6 +492,29 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	}
 
 	return &modelRequest, shouldSelectChannel, nil
+}
+
+// enforceTokenModelLimit applies the token's model allow-list to modelName.
+// It writes a 403 and returns false when the token may not use the model.
+func enforceTokenModelLimit(c *gin.Context, modelName string) bool {
+	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		return true
+	}
+	value, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+	if !ok {
+		// token model limit is empty, all models are not allowed
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+		return false
+	}
+	tokenModelLimit, ok := value.(map[string]bool)
+	if !ok {
+		tokenModelLimit = map[string]bool{}
+	}
+	if !TokenModelLimitAllows(tokenModelLimit, modelName) {
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelName}))
+		return false
+	}
+	return true
 }
 
 // TokenModelLimitAllows reports whether a token model-limit map authorizes

@@ -322,6 +322,27 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	return tasks
 }
 
+// ListUserTasksByPlatform pages the caller's tasks of one platform ordered by
+// id. An empty status means no status filter. channel_id is omitted so the
+// user-facing list never reveals which channel served a task.
+func ListUserTasksByPlatform(userID int, platform constant.TaskPlatform, status string, ascending bool, offset, limit int) ([]*Task, int64, error) {
+	query := DB.Model(&Task{}).Where("user_id = ? AND platform = ?", userID, platform)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	order := "id desc"
+	if ascending {
+		order = "id asc"
+	}
+	tasks := make([]*Task, 0)
+	err := query.Omit("channel_id").Order(order).Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, total, err
+}
+
 func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*Task {
 	var tasks []*Task
 	var err error
