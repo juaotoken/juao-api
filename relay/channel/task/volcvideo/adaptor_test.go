@@ -1,0 +1,301 @@
+package volcvideo
+
+import (
+	"bytes"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func newTestContext(t *testing.T, body map[string]any) *gin.Context {
+	t.Helper()
+	raw, err := common.Marshal(body)
+	require.NoError(t, err)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/video/generations", bytes.NewReader(raw))
+	c.Request.Header.Set("Content-Type", "application/json")
+	return c
+}
+
+func TestValidateRequestAndSetAction(t *testing.T) {
+	textContent := []any{map[string]any{"type": "text", "text": "a cat playing piano"}}
+	imageContent := []any{
+		map[string]any{"type": "text", "text": "a cat playing piano"},
+		map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/cat.png"}},
+	}
+
+	cases := []struct {
+		name        string
+		body        map[string]any
+		wantErrCode string
+		wantAction  string
+	}{
+		{
+			name:       "ok text to video",
+			body:       map[string]any{"model": "doubao-seedance-2-0", "content": textContent},
+			wantAction: constant.TaskActionTextToVideo,
+		},
+		{
+			name:       "ok image to video",
+			body:       map[string]any{"model": "doubao-seedance-2-0", "content": imageContent},
+			wantAction: constant.TaskActionImageToVideo,
+		},
+		{
+			name:        "missing model",
+			body:        map[string]any{"content": textContent},
+			wantErrCode: "missing_model",
+		},
+		{
+			name:        "missing content",
+			body:        map[string]any{"model": "doubao-seedance-2-0"},
+			wantErrCode: "missing_content",
+		},
+		{
+			name:        "empty content",
+			body:        map[string]any{"model": "doubao-seedance-2-0", "content": []any{}},
+			wantErrCode: "missing_content",
+		},
+		{
+			name:        "duration out of range rejected",
+			body:        map[string]any{"model": "doubao-seedance-2-0", "content": textContent, "duration": 4000},
+			wantErrCode: "invalid_duration",
+		},
+		{
+			name:       "duration -1 lets model choose",
+			body:       map[string]any{"model": "doubao-seedance-2-0", "content": textContent, "duration": -1},
+			wantAction: constant.TaskActionTextToVideo,
+		},
+		{
+			name:        "duration string rejected",
+			body:        map[string]any{"model": "doubao-seedance-2-0", "content": textContent, "duration": "abc"},
+			wantErrCode: "invalid_duration",
+		},
+		{
+			name:        "duration fractional rejected",
+			body:        map[string]any{"model": "doubao-seedance-2-0", "content": textContent, "duration": 2.5},
+			wantErrCode: "invalid_duration",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestContext(t, tc.body)
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			a := &Adaptor{}
+
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			if tc.wantErrCode != "" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, tc.wantErrCode, taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			assert.Equal(t, tc.wantAction, info.Action)
+		})
+	}
+}
+
+func TestEstimateBilling(t *testing.T) {
+	cases := []struct {
+		name           string
+		body           map[string]any
+		wantSeconds    int
+		wantResolution string
+	}{
+		{name: "720p explicit 5s", body: map[string]any{"resolution": "720p"}, wantSeconds: 5, wantResolution: "720p"},
+		{name: "duration -1 means model chooses, 15s @1080p default", body: map[string]any{"duration": float64(-1)}, wantSeconds: 15, wantResolution: ""},
+		{name: "absent duration and resolution default to 5s @1080p", body: map[string]any{}, wantSeconds: 5, wantResolution: ""},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Adaptor{requestBody: tc.body}
+			info := &relaycommon.RelayInfo{}
+
+			got := a.EstimateBilling(nil, info)
+			require.NotNil(t, got)
+			want := estimateTokens(tc.wantSeconds, tc.wantResolution) * 2 / common.QuotaPerUnit
+			assert.InDelta(t, want, got["token_estimate"], 1e-9)
+		})
+	}
+
+	t.Run("fixed price model skips token estimate", func(t *testing.T) {
+		a := &Adaptor{requestBody: map[string]any{"resolution": "720p"}}
+		info := &relaycommon.RelayInfo{}
+		info.PriceData.UsePrice = true
+
+		got := a.EstimateBilling(nil, info)
+		assert.Nil(t, got)
+	})
+}
+
+func TestBuildRequestBody(t *testing.T) {
+	a := &Adaptor{requestBody: map[string]any{
+		"model":   "doubao-seedance-2-0",
+		"content": []any{map[string]any{"type": "text", "text": "hi"}},
+		"ratio":   "16:9",
+	}}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: "doubao-seedance-2-0-fast"}}
+
+	reader, err := a.BuildRequestBody(nil, info)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(raw, &got))
+	assert.Equal(t, "doubao-seedance-2-0-fast", got["model"])
+	assert.Equal(t, "16:9", got["ratio"])
+	assert.NotNil(t, got["content"])
+
+	// the cached request body itself is untouched (shallow copy, not a rewrite in place).
+	assert.Equal(t, "doubao-seedance-2-0", a.requestBody["model"])
+}
+
+func TestBuildRequestBody_FallsBackToOriginModelName(t *testing.T) {
+	a := &Adaptor{requestBody: map[string]any{
+		"model":   "doubao-seedance-2-0",
+		"content": []any{map[string]any{"type": "text", "text": "hi"}},
+	}}
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{}}
+	info.OriginModelName = "doubao-seedance-2-0-mini"
+
+	reader, err := a.BuildRequestBody(nil, info)
+	require.NoError(t, err)
+	raw, err := io.ReadAll(reader)
+	require.NoError(t, err)
+
+	var got map[string]any
+	require.NoError(t, common.Unmarshal(raw, &got))
+	assert.Equal(t, "doubao-seedance-2-0-mini", got["model"])
+}
+
+func newUpstreamResponse(body string) *http.Response {
+	return &http.Response{Body: io.NopCloser(strings.NewReader(body))}
+}
+
+func TestParseResponse(t *testing.T) {
+	a := &Adaptor{}
+	info := &relaycommon.RelayInfo{}
+
+	t.Run("prefers task_id", func(t *testing.T) {
+		resp := newUpstreamResponse(`{"id":"vid_1","task_id":"vid_2","object":"video","status":"queued"}`)
+		got, taskErr := a.ParseResponse(nil, resp, info)
+		require.Nil(t, taskErr)
+		assert.Equal(t, "vid_2", got.UpstreamTaskID)
+	})
+
+	t.Run("falls back to id", func(t *testing.T) {
+		resp := newUpstreamResponse(`{"id":"vid_1","object":"video","status":"queued"}`)
+		got, taskErr := a.ParseResponse(nil, resp, info)
+		require.Nil(t, taskErr)
+		assert.Equal(t, "vid_1", got.UpstreamTaskID)
+	})
+
+	t.Run("missing id errors", func(t *testing.T) {
+		resp := newUpstreamResponse(`{"object":"video","status":"queued"}`)
+		_, taskErr := a.ParseResponse(nil, resp, info)
+		require.NotNil(t, taskErr)
+		assert.Equal(t, "missing_task_id", taskErr.Code)
+	})
+}
+
+func TestParseTaskResult(t *testing.T) {
+	a := &Adaptor{}
+	task := &model.Task{}
+
+	t.Run("success carries url and tokens", func(t *testing.T) {
+		body := []byte(`{"code":"success","message":"","data":{"task_id":"vid_1","status":"SUCCESS","progress":"100%","result_url":"https://x/y.mp4","fail_reason":"","total_tokens":50638}}`)
+		info, err := a.ParseTaskResult(task, &http.Response{}, body)
+		require.NoError(t, err)
+		assert.Equal(t, string(model.TaskStatusSuccess), info.Status)
+		assert.Equal(t, "https://x/y.mp4", info.Url)
+		assert.Equal(t, 50638, info.TotalTokens)
+		assert.Equal(t, "100%", info.Progress)
+	})
+
+	t.Run("failure carries reason", func(t *testing.T) {
+		body := []byte(`{"code":"success","data":{"status":"FAILURE","fail_reason":"nsfw content"}}`)
+		info, err := a.ParseTaskResult(task, &http.Response{}, body)
+		require.NoError(t, err)
+		assert.Equal(t, string(model.TaskStatusFailure), info.Status)
+		assert.Equal(t, "nsfw content", info.Reason)
+	})
+
+	t.Run("failure defaults reason when upstream omits it", func(t *testing.T) {
+		body := []byte(`{"code":"success","data":{"status":"FAILURE"}}`)
+		info, err := a.ParseTaskResult(task, &http.Response{}, body)
+		require.NoError(t, err)
+		assert.Equal(t, "task failed", info.Reason)
+	})
+
+	t.Run("queued maps to queued", func(t *testing.T) {
+		body := []byte(`{"code":"success","data":{"status":"QUEUED","progress":"0%"}}`)
+		info, err := a.ParseTaskResult(task, &http.Response{}, body)
+		require.NoError(t, err)
+		assert.Equal(t, string(model.TaskStatusQueued), info.Status)
+	})
+
+	t.Run("unrecognized status maps to unknown", func(t *testing.T) {
+		body := []byte(`{"code":"success","data":{"status":"WEIRD"}}`)
+		info, err := a.ParseTaskResult(task, &http.Response{}, body)
+		require.NoError(t, err)
+		assert.Equal(t, string(model.TaskStatusUnknown), info.Status)
+		assert.Contains(t, info.Reason, "WEIRD")
+	})
+
+	t.Run("non-success code errors", func(t *testing.T) {
+		body := []byte(`{"code":"task_not_exist","message":"task_not_exist","data":null}`)
+		_, err := a.ParseTaskResult(task, &http.Response{}, body)
+		assert.Error(t, err)
+	})
+}
+
+func TestAdjustBillingOnComplete(t *testing.T) {
+	a := &Adaptor{}
+
+	t.Run("success settles tokens times model ratio times group ratio", func(t *testing.T) {
+		task := &model.Task{Status: model.TaskStatusSuccess}
+		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}
+		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
+		assert.Equal(t, 3000, got)
+	})
+
+	t.Run("failed task settles nothing", func(t *testing.T) {
+		task := &model.Task{Status: model.TaskStatusFailure}
+		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}
+		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
+		assert.Zero(t, got)
+	})
+
+	t.Run("zero tokens settles nothing", func(t *testing.T) {
+		task := &model.Task{Status: model.TaskStatusSuccess}
+		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}
+		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 0})
+		assert.Zero(t, got)
+	})
+
+	t.Run("per-call billing skips delta settlement", func(t *testing.T) {
+		task := &model.Task{Status: model.TaskStatusSuccess}
+		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5, PerCallBilling: true}
+		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
+		assert.Zero(t, got)
+	})
+
+	t.Run("missing billing context settles nothing", func(t *testing.T) {
+		task := &model.Task{Status: model.TaskStatusSuccess}
+		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
+		assert.Zero(t, got)
+	})
+}

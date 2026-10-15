@@ -1,0 +1,297 @@
+// Package volcvideo implements the Go-native TaskAdaptor for channel type 500
+// (Volcengine Video). The upstream (https://lm.sls.cn) speaks Volcengine's
+// native video-generation protocol: the submit body carries the prompt and
+// any reference media inside a "content" array (there is no top-level
+// "prompt" field), so this adaptor reads and forwards the raw request body
+// instead of converting through the host's generic TaskSubmitReq shape.
+package volcvideo
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"io"
+	"maps"
+	"net/http"
+	"net/url"
+	"strings"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relay/channel"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/service"
+
+	"github.com/gin-gonic/gin"
+)
+
+// maxSubmitResponseBytes bounds how much of the upstream submit response this
+// adaptor will buffer in memory.
+const maxSubmitResponseBytes = 1 << 20 // 1 MiB
+
+// Adaptor is the Go-native task adaptor for Volcengine Video.
+type Adaptor struct {
+	info        *relaycommon.RelayInfo
+	requestBody map[string]any
+}
+
+func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
+	a.info = info
+}
+
+// ValidateRequestAndSetAction reads the raw submit body (Volcengine-native
+// shape, not the host's generic TaskSubmitReq), validates the fields that
+// also act as billing inputs, and determines the task action from the
+// content array.
+func (a *Adaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+	raw, err := storage.Bytes()
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+	}
+
+	var body map[string]any
+	if err := common.Unmarshal(raw, &body); err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_json", http.StatusBadRequest)
+	}
+
+	modelName, _ := body["model"].(string)
+	if strings.TrimSpace(modelName) == "" {
+		return service.TaskErrorWrapperLocal(errors.New("model is required"), "missing_model", http.StatusBadRequest)
+	}
+
+	content, ok := body["content"].([]any)
+	if !ok || len(content) == 0 {
+		return service.TaskErrorWrapperLocal(errors.New("content is required"), "missing_content", http.StatusBadRequest)
+	}
+
+	if rawDuration, present := body["duration"]; present {
+		duration, isNumber := rawDuration.(float64)
+		if !isNumber || duration != float64(int(duration)) {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be an integer"), "invalid_duration", http.StatusBadRequest)
+		}
+		d := int(duration)
+		if d != -1 && (d < 1 || d > relaycommon.MaxTaskDurationSeconds) {
+			return service.TaskErrorWrapperLocal(fmt.Errorf("duration must be -1 or between 1 and %d", relaycommon.MaxTaskDurationSeconds), "invalid_duration", http.StatusBadRequest)
+		}
+	}
+
+	a.requestBody = body
+
+	info.Action = constant.TaskActionTextToVideo
+	for _, item := range content {
+		part, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		switch t, _ := part["type"].(string); t {
+		case "image_url", "video_url", "audio_url":
+			info.Action = constant.TaskActionImageToVideo
+		}
+	}
+
+	if info.OriginModelName == "" {
+		info.OriginModelName = modelName
+	}
+
+	return nil
+}
+
+// EstimateBilling returns the token-based OtherRatio used to reserve quota at
+// submit time. The host's ModelPriceHelperPerCall already reserved
+// modelRatio/2 × QuotaPerUnit × groupRatio when the model has no fixed price
+// (UsePrice == false); multiplying that base by token_estimate =
+// estimatedTokens×2/QuotaPerUnit yields estimatedTokens × modelRatio ×
+// groupRatio, matching the settlement formula in AdjustBillingOnComplete.
+// Fixed-price models (UsePrice == true) skip token estimation entirely.
+func (a *Adaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	if info.PriceData.UsePrice {
+		return nil
+	}
+	resolution, _ := a.requestBody["resolution"].(string)
+	seconds := requestSeconds(a.requestBody)
+	tokens := estimateTokens(seconds, resolution)
+	return map[string]float64{"token_estimate": tokens * 2 / common.QuotaPerUnit}
+}
+
+// AdjustBillingOnSubmit performs no submit-time adjustment: Volcengine does
+// not echo billing-relevant parameters in the submit response.
+func (a *Adaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {
+	return nil
+}
+
+// AdjustBillingOnComplete settles the final quota from the upstream-reported
+// total_tokens using the model/group ratios frozen at submit time
+// (task.PrivateData.BillingContext). It deliberately does not return 0 and
+// let the host fall back to RecalculateTaskQuotaByTokens, because that path
+// would reapply the submit-time OtherRatios (token_estimate) a second time.
+// Returns 0 for a failed task, per-call billing, a missing billing context,
+// or a non-positive token count.
+func (a *Adaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	if task == nil || taskResult == nil || task.Status != model.TaskStatusSuccess {
+		return 0
+	}
+	billingContext := task.PrivateData.BillingContext
+	if billingContext == nil || billingContext.PerCallBilling {
+		return 0
+	}
+	tokens := taskResult.TotalTokens
+	if tokens <= 0 {
+		return 0
+	}
+	quota, clamp := common.QuotaFromFloatChecked(float64(tokens) * billingContext.ModelRatio * billingContext.GroupRatio)
+	if clamp != nil {
+		common.SysError(fmt.Sprintf("volcvideo: AdjustBillingOnComplete quota saturated: %+v", clamp))
+	}
+	return quota
+}
+
+// BuildRequestURL builds the submit URL: {base}/v1/video/generations.
+func (a *Adaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	if info.ChannelBaseUrl == "" {
+		return "", errors.New("channel base url is empty")
+	}
+	return strings.TrimSuffix(info.ChannelBaseUrl, "/") + "/v1/video/generations", nil
+}
+
+func (a *Adaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+info.ApiKey)
+	return nil
+}
+
+// BuildRequestBody forwards the validated request body unchanged, except for
+// replacing "model" with the channel's mapped upstream model name.
+func (a *Adaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	body := make(map[string]any, len(a.requestBody))
+	maps.Copy(body, a.requestBody)
+
+	upstreamModel := info.UpstreamModelName
+	if upstreamModel == "" {
+		upstreamModel = info.OriginModelName
+	}
+	body["model"] = upstreamModel
+
+	data, err := common.Marshal(body)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request body failed: %w", err)
+	}
+	return bytes.NewReader(data), nil
+}
+
+func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return channel.DoTaskApiRequest(a, c, info, requestBody)
+}
+
+// ParseResponse reads the submit response and extracts the upstream task ID
+// (task_id, falling back to id for forward compatibility).
+func (a *Adaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *dto.TaskError) {
+	body, err := readLimited(resp.Body, maxSubmitResponseBytes)
+	if err != nil {
+		return nil, service.TaskErrorWrapper(err, "read_response_failed", http.StatusBadGateway)
+	}
+
+	var parsed submitResponse
+	if err := common.Unmarshal(body, &parsed); err != nil {
+		return nil, service.TaskErrorWrapper(err, "invalid_response", http.StatusBadGateway)
+	}
+
+	taskID := parsed.TaskID
+	if taskID == "" {
+		taskID = parsed.ID
+	}
+	if taskID == "" {
+		return nil, service.TaskErrorWrapper(errors.New("upstream response missing task id"), "missing_task_id", http.StatusBadGateway)
+	}
+
+	return &channel.TaskSubmitResponse{UpstreamTaskID: taskID, TaskData: body}, nil
+}
+
+func (a *Adaptor) GetModelList() []string {
+	return ModelList
+}
+
+func (a *Adaptor) GetChannelName() string {
+	return ChannelTypeName
+}
+
+// FetchTask polls GET {base}/v1/video/generations/{task_id}.
+func (a *Adaptor) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
+	fullURL := strings.TrimSuffix(baseURL, "/") + "/v1/video/generations/" + url.PathEscape(task.GetUpstreamTaskID())
+
+	req, err := http.NewRequest(http.MethodGet, fullURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+
+	client, err := service.GetHttpClientWithProxy(proxy)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
+}
+
+// ParseTaskResult maps the Volcengine-native poll envelope to the host's
+// TaskInfo shape.
+func (a *Adaptor) ParseTaskResult(task *model.Task, resp *http.Response, body []byte) (*relaycommon.TaskInfo, error) {
+	var envelope pollEnvelope
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return nil, fmt.Errorf("invalid poll response: %w", err)
+	}
+	if envelope.Code != "success" {
+		msg := envelope.Message
+		if msg == "" {
+			msg = envelope.Code
+		}
+		return nil, fmt.Errorf("upstream poll error: %s", msg)
+	}
+
+	info := &relaycommon.TaskInfo{
+		Progress: envelope.Data.Progress,
+	}
+
+	switch envelope.Data.Status {
+	case "NOT_START", "SUBMITTED", "QUEUED":
+		info.Status = string(model.TaskStatusQueued)
+	case "IN_PROGRESS":
+		info.Status = string(model.TaskStatusInProgress)
+	case "SUCCESS":
+		info.Status = string(model.TaskStatusSuccess)
+		info.Progress = "100%"
+		info.Url = envelope.Data.ResultURL
+		info.TotalTokens = envelope.Data.TotalTokens
+	case "FAILURE":
+		info.Status = string(model.TaskStatusFailure)
+		reason := envelope.Data.FailReason
+		if reason == "" {
+			reason = "task failed"
+		}
+		info.Reason = reason
+	default:
+		info.Status = string(model.TaskStatusUnknown)
+		info.Reason = "unrecognized status: " + envelope.Data.Status
+	}
+
+	return info, nil
+}
+
+// readLimited reads at most limit bytes from r, returning an error if the
+// body exceeds that bound.
+func readLimited(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("response body exceeds %d bytes", limit)
+	}
+	return data, nil
+}
