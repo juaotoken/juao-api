@@ -27,6 +27,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var (
+	_ channel.TaskAdaptor          = (*Adaptor)(nil)
+	_ channel.OpenAIVideoConverter = (*Adaptor)(nil)
+)
+
 // maxSubmitResponseBytes bounds how much of the upstream submit response this
 // adaptor will buffer in memory.
 const maxSubmitResponseBytes = 1 << 20 // 1 MiB
@@ -165,30 +170,54 @@ func (a *Adaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []
 	return nil
 }
 
-// AdjustBillingOnComplete settles the final quota from the upstream-reported
-// total_tokens using the model/group ratios frozen at submit time
-// (task.PrivateData.BillingContext). It deliberately does not return 0 and
-// let the host fall back to RecalculateTaskQuotaByTokens, because that path
-// would reapply the submit-time OtherRatios (token_estimate) a second time.
-// Returns 0 for a failed task, per-call billing, a missing billing context,
-// or a non-positive token count.
-func (a *Adaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+// SettleOnComplete owns completion settlement for a successful token-billed
+// task (service.TaskCompletionSettler): the final quota is the
+// upstream-reported total_tokens × the model and group ratios frozen at submit
+// time (task.PrivateData.BillingContext). Being authoritative matters: a zero
+// result (e.g. a free group with GroupRatio 0) is final, and the host's
+// RecalculateTaskQuotaByTokens fallback — which reads current ratios and
+// reapplies the submit-time token_estimate — never runs. A success without a
+// token count keeps the reservation. Failed tasks, per-call billing, and a
+// missing billing context are not handled, so the host refunds or keeps the
+// pre-charge as usual.
+func (a *Adaptor) SettleOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) (int, *common.QuotaClamp, bool) {
 	if task == nil || taskResult == nil || task.Status != model.TaskStatusSuccess {
-		return 0
+		return 0, nil, false
 	}
 	billingContext := task.PrivateData.BillingContext
 	if billingContext == nil || billingContext.PerCallBilling {
-		return 0
+		return 0, nil, false
 	}
 	tokens := taskResult.TotalTokens
 	if tokens <= 0 {
-		return 0
+		return task.Quota, nil, true
+	}
+	if billingContext.ModelRatio <= 0 || billingContext.GroupRatio <= 0 {
+		return 0, nil, true
 	}
 	quota, clamp := common.QuotaFromFloatChecked(float64(tokens) * billingContext.ModelRatio * billingContext.GroupRatio)
-	if clamp != nil {
-		common.SysError(fmt.Sprintf("volcvideo: AdjustBillingOnComplete quota saturated: %+v", clamp))
+	return quota, clamp, true
+}
+
+// AdjustBillingOnComplete returns 0: settlement is owned by SettleOnComplete,
+// which the host consults first, so this path never double settles.
+func (a *Adaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	return 0
+}
+
+// ConvertToOpenAIVideo renders a task for GET /v1/videos/:task_id. A
+// successful task carries its result URL in metadata.url.
+func (a *Adaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	if task == nil {
+		return nil, errors.New("task is required")
 	}
-	return quota
+	video := task.ToOpenAIVideo()
+	if task.Status == model.TaskStatusSuccess {
+		if resultURL := task.GetResultURL(); resultURL != "" {
+			video.SetMetadata("url", resultURL)
+		}
+	}
+	return common.Marshal(video)
 }
 
 // BuildRequestURL builds the submit URL: {base}/v1/video/generations.
@@ -309,7 +338,7 @@ func (a *Adaptor) ParseTaskResult(task *model.Task, resp *http.Response, body []
 		info.Status = string(model.TaskStatusSuccess)
 		info.Progress = "100%"
 		info.Url = envelope.Data.ResultURL
-		info.TotalTokens = envelope.Data.TotalTokens
+		info.TotalTokens = envelope.Data.TotalTokens.Int()
 	case "FAILURE":
 		info.Status = string(model.TaskStatusFailure)
 		reason := envelope.Data.FailReason

@@ -283,6 +283,15 @@ func TestParseTaskResult(t *testing.T) {
 		assert.Equal(t, "100%", info.Progress)
 	})
 
+	t.Run("total_tokens decodes from string, float, and rejects junk", func(t *testing.T) {
+		for raw, want := range map[string]int{`"50638"`: 50638, `50638.0`: 50638, `" 12 "`: 12, `-5`: 0, `"abc"`: 0, `1e20`: 0, `null`: 0, `true`: 0} {
+			body := []byte(`{"code":"success","data":{"status":"SUCCESS","result_url":"https://x/y.mp4","total_tokens":` + raw + `}}`)
+			info, err := a.ParseTaskResult(task, &http.Response{}, body)
+			require.NoError(t, err, raw)
+			assert.Equal(t, want, info.TotalTokens, raw)
+		}
+	})
+
 	t.Run("failure carries reason", func(t *testing.T) {
 		body := []byte(`{"code":"success","data":{"status":"FAILURE","fail_reason":"nsfw content"}}`)
 		info, err := a.ParseTaskResult(task, &http.Response{}, body)
@@ -320,42 +329,57 @@ func TestParseTaskResult(t *testing.T) {
 	})
 }
 
-func TestAdjustBillingOnComplete(t *testing.T) {
-	a := &Adaptor{}
+func TestSettleOnComplete(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      model.TaskStatus
+		context     *model.TaskBillingContext
+		tokens      int
+		wantHandled bool
+		wantQuota   int
+	}{
+		{name: "tokens times model ratio times group ratio", status: model.TaskStatusSuccess, context: &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}, tokens: 1000, wantHandled: true, wantQuota: 3000},
+		{name: "free group ratio settles to zero and is final", status: model.TaskStatusSuccess, context: &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 0}, tokens: 1000, wantHandled: true, wantQuota: 0},
+		{name: "zero tokens keep the reservation", status: model.TaskStatusSuccess, context: &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}, tokens: 0, wantHandled: true, wantQuota: 777},
+		{name: "failed task is left to the host refund", status: model.TaskStatusFailure, context: &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}, tokens: 1000},
+		{name: "per-call billing is not handled", status: model.TaskStatusSuccess, context: &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5, PerCallBilling: true}, tokens: 1000},
+		{name: "missing billing context is not handled", status: model.TaskStatusSuccess, tokens: 1000},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := &model.Task{Status: tc.status, Quota: 777}
+			task.PrivateData.BillingContext = tc.context
+			quota, clamp, handled := (&Adaptor{}).SettleOnComplete(task, &relaycommon.TaskInfo{TotalTokens: tc.tokens})
+			assert.Equal(t, tc.wantHandled, handled)
+			assert.Nil(t, clamp)
+			if tc.wantHandled {
+				assert.Equal(t, tc.wantQuota, quota)
+			}
+			assert.Zero(t, (&Adaptor{}).AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: tc.tokens}), "settlement is owned by SettleOnComplete only")
+		})
+	}
+}
 
-	t.Run("success settles tokens times model ratio times group ratio", func(t *testing.T) {
-		task := &model.Task{Status: model.TaskStatusSuccess}
-		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}
-		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
-		assert.Equal(t, 3000, got)
-	})
+func TestConvertToOpenAIVideo(t *testing.T) {
+	task := &model.Task{TaskID: "task_1", Status: model.TaskStatusSuccess, Progress: "100%", FinishTime: 1700000100}
+	task.Properties.OriginModelName = "doubao-seedance-2-0"
+	task.PrivateData.ResultURL = "https://x/y.mp4"
+	raw, err := (&Adaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	var out map[string]any
+	require.NoError(t, common.Unmarshal(raw, &out))
+	assert.Equal(t, "task_1", out["id"])
+	assert.Equal(t, "completed", out["status"])
+	assert.Equal(t, "doubao-seedance-2-0", out["model"])
+	assert.Equal(t, map[string]any{"url": "https://x/y.mp4"}, out["metadata"])
 
-	t.Run("failed task settles nothing", func(t *testing.T) {
-		task := &model.Task{Status: model.TaskStatusFailure}
-		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}
-		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
-		assert.Zero(t, got)
-	})
-
-	t.Run("zero tokens settles nothing", func(t *testing.T) {
-		task := &model.Task{Status: model.TaskStatusSuccess}
-		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5}
-		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 0})
-		assert.Zero(t, got)
-	})
-
-	t.Run("per-call billing skips delta settlement", func(t *testing.T) {
-		task := &model.Task{Status: model.TaskStatusSuccess}
-		task.PrivateData.BillingContext = &model.TaskBillingContext{ModelRatio: 2, GroupRatio: 1.5, PerCallBilling: true}
-		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
-		assert.Zero(t, got)
-	})
-
-	t.Run("missing billing context settles nothing", func(t *testing.T) {
-		task := &model.Task{Status: model.TaskStatusSuccess}
-		got := a.AdjustBillingOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
-		assert.Zero(t, got)
-	})
+	task = &model.Task{TaskID: "task_2", Status: model.TaskStatusInProgress, Progress: "30%"}
+	raw, err = (&Adaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	out = nil
+	require.NoError(t, common.Unmarshal(raw, &out))
+	assert.NotContains(t, out, "metadata")
+	assert.EqualValues(t, 30, out["progress"])
 }
 
 func TestResolutionMaxPixels(t *testing.T) {

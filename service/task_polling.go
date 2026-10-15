@@ -46,6 +46,12 @@ type TaskDataSanitizer interface {
 	SanitizeTaskData(body []byte) []byte
 }
 
+// TaskCompletionSettler lets an adaptor own completion settlement outright:
+// handled=true means quota (possibly zero) is final and no host fallback runs.
+type TaskCompletionSettler interface {
+	SettleOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) (quota int, clamp *common.QuotaClamp, handled bool)
+}
+
 const (
 	pollClassOK           = "ok"
 	pollClassOtherClient  = "other_client"
@@ -695,7 +701,8 @@ func truncateBase64(s string) string {
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
 // 返回 true 表示用量结算路径已接管最终计费；失败任务仅在返回 false 时补做全额退款。
-// 优先级：1. tiered snapshot → 2. adaptor 调整 → 3. token 重算。
+// 优先级：1. tiered snapshot → 2. 按次计费 → 3. adaptor 接管结算(TaskCompletionSettler)
+// → 4. adaptor 调整 → 5. token 重算。
 //
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
@@ -721,6 +728,13 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return false
+	}
+	// adaptor 完全接管结算（额度可为 0，例如免费分组），不再回落 token 重算。
+	if settler, ok := adaptor.(TaskCompletionSettler); ok && task.Status == model.TaskStatusSuccess {
+		if quota, clamp, handled := settler.SettleOnComplete(task, taskResult); handled {
+			RecalculateTaskQuota(ctx, task, quota, "adaptor token settlement", clamp)
+			return true
+		}
 	}
 	// 优先让 adaptor 决定最终额度。
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {

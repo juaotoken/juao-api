@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -1099,4 +1100,47 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+// settlingPollingAdaptor implements TaskCompletionSettler.
+type settlingPollingAdaptor struct {
+	scriptedPollingAdaptor
+	quota   int
+	handled bool
+}
+
+func (a *settlingPollingAdaptor) SettleOnComplete(*model.Task, *relaycommon.TaskInfo) (int, *common.QuotaClamp, bool) {
+	return a.quota, nil, a.handled
+}
+
+// TestSettleTaskCompletionSettlerIsFinal: an adaptor-owned zero settlement
+// (e.g. a free group) must not fall back to RecalculateTaskQuotaByTokens,
+// which would charge current ratios for the reported tokens.
+func TestSettleTaskCompletionSettlerIsFinal(t *testing.T) {
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+	})
+	truncate(t)
+	const userID, tokenID, channelID = 513, 513, 513
+	const initialQuota, tokenRemain = 10_000, 7_000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-settler", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 0, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	result := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 5000}
+
+	settled := settleTaskBillingOnComplete(context.Background(), &settlingPollingAdaptor{handled: true}, task, result)
+	assert.True(t, settled)
+	assert.Equal(t, 0, task.Quota)
+	assert.Equal(t, initialQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+
+	// Control: the same task without an authoritative settler is charged by tokens.
+	settled = settleTaskBillingOnComplete(context.Background(), &settlingPollingAdaptor{}, task, result)
+	assert.True(t, settled)
+	assert.Equal(t, 5000, task.Quota)
 }
