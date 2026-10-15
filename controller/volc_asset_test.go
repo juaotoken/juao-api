@@ -27,9 +27,10 @@ type volcUpstreamCall struct {
 }
 
 type volcAssetFixture struct {
-	mu        sync.Mutex
-	calls     []volcUpstreamCall
-	channelID int
+	mu          sync.Mutex
+	calls       []volcUpstreamCall
+	channelID   int
+	upstreamURL string
 }
 
 func (f *volcAssetFixture) takeCalls() []volcUpstreamCall {
@@ -49,7 +50,7 @@ func setupVolcAssetFixture(t *testing.T) *volcAssetFixture {
 	previousMemoryCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
 	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.VolcAsset{}))
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.VolcAsset{}, &model.VolcAssetGroup{}))
 	model.DB, model.LOG_DB = database, database
 	common.MemoryCacheEnabled = false
 	common.RedisEnabled = false
@@ -67,11 +68,19 @@ func setupVolcAssetFixture(t *testing.T) *volcAssetFixture {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/volcengine/assets":
-			_, _ = io.WriteString(w, `{"success":true,"message":"ok","data":{"logical_id":"la_new","logical_group_id":"lag_y","group_name":"g","status":"Processing","name":"n","asset_type":"Image","group_id":"group_volc123"}}`)
+			// Echo the forwarded group_name like the upstream does.
+			var req struct {
+				GroupName string `json:"group_name"`
+			}
+			_ = common.Unmarshal(body, &req)
+			groupName, _ := common.Marshal(req.GroupName)
+			_, _ = io.WriteString(w, `{"success":true,"message":"ok","data":{"logical_id":"la_new","logical_group_id":"lag_y","group_name":`+string(groupName)+`,"status":"Processing","name":"n","asset_type":"Image","group_id":"group_volc123"}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/volcengine/assets/la_a":
-			_, _ = io.WriteString(w, `{"success":true,"data":{"logical_id":"la_a","status":"Active"}}`)
+			_, _ = io.WriteString(w, `{"success":true,"data":{"logical_id":"la_a","status":"Active","group_name":"u1-mine"}}`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/volcengine/assets/la_a":
 			_, _ = io.WriteString(w, `{"success":true,"message":"Asset deleted successfully"}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/volcengine/assets/groups/by-byted-token" && strings.Contains(string(body), `"good"`):
+			_, _ = io.WriteString(w, `{"success":true,"data":{"group_id":"group_person1"}}`)
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/volcengine/assets/groups/by-byted-token":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = io.WriteString(w, `{"message":"invalid byted token","success":false}`)
@@ -91,6 +100,7 @@ func setupVolcAssetFixture(t *testing.T) *volcAssetFixture {
 	}
 	require.NoError(t, database.Create(&channel).Error)
 	f.channelID = channel.Id
+	f.upstreamURL = upstream.URL
 	return f
 }
 
@@ -123,7 +133,8 @@ func TestVolcAssetCreateRecordsOwnership(t *testing.T) {
 	assert.Contains(t, resp.Body.String(), `"logical_id":"la_new"`)
 	calls := f.takeCalls()
 	require.Len(t, calls, 1)
-	assert.Equal(t, volcUpstreamCall{Method: http.MethodPost, Path: "/v1/volcengine/assets", Auth: "Bearer sk-up", Body: `{"source_url":"https://x/a.png","asset_type":"Image"}`}, calls[0])
+	assert.Equal(t, volcUpstreamCall{Method: http.MethodPost, Path: "/v1/volcengine/assets", Auth: "Bearer sk-up", Body: calls[0].Body}, calls[0])
+	assert.JSONEq(t, `{"source_url":"https://x/a.png","asset_type":"Image","group_name":"u1-default"}`, calls[0].Body, "auto grouping is pinned to the caller's namespace")
 
 	asset, err := model.GetVolcAsset(1, "la_new")
 	require.NoError(t, err)
@@ -192,7 +203,7 @@ func TestVolcAssetDetailAndDeleteRequireOwnership(t *testing.T) {
 
 	resp := serveVolcAsset(1, "default", http.MethodGet, "/v1/volcengine/assets/la_a", "")
 	require.Equal(t, http.StatusOK, resp.Code)
-	assert.Contains(t, resp.Body.String(), `"status":"Active"`)
+	assert.JSONEq(t, `{"success":true,"data":{"logical_id":"la_a","status":"Active","group_name":"mine"}}`, resp.Body.String(), "the caller's namespace prefix is stripped")
 	asset, err := model.GetVolcAsset(1, "la_a")
 	require.NoError(t, err)
 	assert.Equal(t, "Active", asset.Status)
@@ -234,5 +245,93 @@ func TestVolcAssetPassthroughAndChannelSelection(t *testing.T) {
 	require.NoError(t, (&model.VolcAsset{LogicalID: "la_a", UserID: 1, ChannelID: f.channelID}).Insert())
 	resp = serveVolcAsset(1, "default", http.MethodGet, "/v1/volcengine/assets/la_a", "")
 	assert.Equal(t, http.StatusServiceUnavailable, resp.Code, "owning channel disabled")
+	assert.Empty(t, f.takeCalls())
+}
+
+func TestVolcAssetCreateIsolatesGroupsPerUser(t *testing.T) {
+	f := setupVolcAssetFixture(t)
+
+	resp := serveVolcAsset(1, "default", http.MethodPost, "/v1/volcengine/assets", `{"source_url":"https://x/a.png","asset_type":"Image","group_name":"cats","extra":1}`)
+	require.Equal(t, http.StatusOK, resp.Code)
+	assert.Contains(t, resp.Body.String(), `"group_name":"cats"`)
+	calls := f.takeCalls()
+	require.Len(t, calls, 1)
+	assert.JSONEq(t, `{"source_url":"https://x/a.png","asset_type":"Image","group_name":"u1-cats","extra":1}`, calls[0].Body)
+	asset, err := model.GetVolcAsset(1, "la_new")
+	require.NoError(t, err)
+	require.NotNil(t, asset)
+	assert.Equal(t, "cats", asset.GroupName)
+	for _, groupID := range []string{"group_volc123", "lag_y"} {
+		group, err := model.GetVolcAssetGroup(1, groupID)
+		require.NoError(t, err)
+		require.NotNil(t, group, groupID)
+		assert.Equal(t, f.channelID, group.ChannelID)
+	}
+	require.NoError(t, model.DeleteVolcAsset(asset.ID))
+
+	resp = serveVolcAsset(1, "default", http.MethodPost, "/v1/volcengine/assets", `{"source_url":"https://x/a.png","asset_type":"Image","name":" dog "}`)
+	require.Equal(t, http.StatusOK, resp.Code)
+	calls = f.takeCalls()
+	require.Len(t, calls, 1)
+	assert.JSONEq(t, `{"source_url":"https://x/a.png","asset_type":"Image","name":" dog ","group_name":"u1-dog"}`, calls[0].Body)
+	assert.Contains(t, resp.Body.String(), `"group_name":"dog"`)
+
+	// Another user cannot create into a group it does not own, even one that
+	// exists for someone else.
+	resp = serveVolcAsset(2, "default", http.MethodPost, "/v1/volcengine/assets", `{"source_url":"https://x/a.png","asset_type":"Image","group_id":"group_volc123"}`)
+	assert.Equal(t, http.StatusBadRequest, resp.Code)
+	assert.JSONEq(t, `{"success":false,"message":"unknown group_id"}`, resp.Body.String())
+	assert.Empty(t, f.takeCalls())
+}
+
+func TestVolcAssetCreateRoutesOwnedGroupToItsChannel(t *testing.T) {
+	f := setupVolcAssetFixture(t)
+	upstreamURL := f.upstreamURL
+	other := model.Channel{Type: constant.ChannelTypeVolcVideo, Name: "volc-other", Key: "sk-other", BaseURL: &upstreamURL, Group: "default", Status: common.ChannelStatusEnabled}
+	require.NoError(t, model.DB.Create(&other).Error)
+
+	resp := serveVolcAsset(1, "default", http.MethodPost, "/v1/volcengine/assets/groups/by-byted-token", `{"byted_token":"good"}`)
+	require.Equal(t, http.StatusOK, resp.Code)
+	calls := f.takeCalls()
+	require.Len(t, calls, 1)
+	group, err := model.GetVolcAssetGroup(1, "group_person1")
+	require.NoError(t, err)
+	require.NotNil(t, group)
+	tokenChannelID, tokenKey := f.channelID, "Bearer sk-up"
+	if calls[0].Auth == "Bearer sk-other" {
+		tokenChannelID, tokenKey = other.Id, "Bearer sk-other"
+	}
+	assert.Equal(t, tokenChannelID, group.ChannelID)
+
+	for range 8 {
+		resp = serveVolcAsset(1, "default", http.MethodPost, "/v1/volcengine/assets", `{"source_url":"https://x/a.png","asset_type":"Image","group_id":"group_person1"}`)
+		require.Equal(t, http.StatusOK, resp.Code)
+		calls = f.takeCalls()
+		require.Len(t, calls, 1)
+		assert.Equal(t, tokenKey, calls[0].Auth, "create into an owned group uses that group's channel")
+		assert.JSONEq(t, `{"source_url":"https://x/a.png","asset_type":"Image","group_id":"group_person1"}`, calls[0].Body)
+		require.NoError(t, model.DB.Where("logical_id = ?", "la_new").Delete(&model.VolcAsset{}).Error)
+	}
+
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", tokenChannelID).Update("status", common.ChannelStatusManuallyDisabled).Error)
+	resp = serveVolcAsset(1, "default", http.MethodPost, "/v1/volcengine/assets", `{"source_url":"https://x/a.png","asset_type":"Image","group_id":"group_person1"}`)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.Code, "a disabled group channel is not replaced by another account")
+	assert.Empty(t, f.takeCalls())
+}
+
+func TestVolcAssetSkipsMultiKeyChannels(t *testing.T) {
+	f := setupVolcAssetFixture(t)
+	require.NoError(t, (&model.VolcAsset{LogicalID: "la_a", UserID: 1, ChannelID: f.channelID}).Insert())
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", f.channelID).Updates(map[string]any{
+		"key":          "sk-1\nsk-2",
+		"channel_info": model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2},
+	}).Error)
+
+	resp := serveVolcAsset(1, "default", http.MethodPost, "/v1/volcengine/assets", `{"source_url":"https://x/a.png","asset_type":"Image"}`)
+	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
+	assert.JSONEq(t, `{"success":false,"message":"no available Volcengine Video channel"}`, resp.Body.String())
+	resp = serveVolcAsset(1, "default", http.MethodGet, "/v1/volcengine/assets/la_a", "")
+	assert.Equal(t, http.StatusServiceUnavailable, resp.Code)
+	assert.JSONEq(t, `{"success":false,"message":"Volcengine assets require a single-key channel"}`, resp.Body.String())
 	assert.Empty(t, f.takeCalls())
 }

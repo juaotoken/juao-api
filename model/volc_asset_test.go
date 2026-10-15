@@ -16,7 +16,7 @@ func TestVolcAssetOwnershipAndListing(t *testing.T) {
 	var err error
 	DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
-	require.NoError(t, DB.AutoMigrate(&VolcAsset{}))
+	require.NoError(t, DB.AutoMigrate(&VolcAsset{}, &VolcAssetGroup{}))
 
 	seed := []*VolcAsset{
 		{LogicalID: "la_1", UserID: 1, ChannelID: 10, LogicalGroupID: "lag_a", GroupID: "group_x", Status: "Processing"},
@@ -68,6 +68,35 @@ func TestVolcAssetOwnershipAndListing(t *testing.T) {
 	owned, err = GetVolcAsset(1, "la_1")
 	require.NoError(t, err)
 	assert.Nil(t, owned)
+}
+
+func TestVolcAssetGroupOwnership(t *testing.T) {
+	originalDB := DB
+	t.Cleanup(func() { DB = originalDB })
+	var err error
+	DB, err = gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, DB.AutoMigrate(&VolcAssetGroup{}))
+
+	require.NoError(t, RecordVolcAssetGroup(1, 10, "group_a"))
+	require.NoError(t, RecordVolcAssetGroup(1, 10, "group_a"), "same owner is idempotent")
+	assert.ErrorIs(t, RecordVolcAssetGroup(2, 10, "group_a"), ErrVolcAssetGroupOwnedByOther)
+	require.NoError(t, RecordVolcAssetGroup(2, 11, "group_a"), "the same group id on another channel is a different group")
+
+	var count int64
+	require.NoError(t, DB.Model(&VolcAssetGroup{}).Where("group_id = ?", "group_a").Count(&count).Error)
+	assert.EqualValues(t, 2, count)
+	assert.Error(t, DB.Create(&VolcAssetGroup{UserID: 3, ChannelID: 10, GroupID: "group_a"}).Error, "unique (channel_id, group_id)")
+
+	owned, err := GetVolcAssetGroup(1, "group_a")
+	require.NoError(t, err)
+	require.NotNil(t, owned)
+	assert.Equal(t, 10, owned.ChannelID)
+	assert.NotZero(t, owned.CreatedAt)
+
+	missing, err := GetVolcAssetGroup(3, "group_a")
+	require.NoError(t, err)
+	assert.Nil(t, missing)
 }
 
 func TestCollectVolcAssetReferences(t *testing.T) {

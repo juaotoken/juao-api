@@ -353,6 +353,7 @@ func migrateDB() error {
 		&Task{},
 		&TaskPlugin{},
 		&VolcAsset{},
+		&VolcAssetGroup{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},

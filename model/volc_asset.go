@@ -30,6 +30,19 @@ type VolcAsset struct {
 	UpdatedAt      int64  `json:"updated_at" gorm:"bigint"`
 }
 
+// VolcAssetGroup records which user owns an upstream asset group id on a
+// Volcengine Video channel: a real-person group from by-byted-token, a local
+// logical group (lag_ prefix), or an upstream physical group. Creating an
+// asset into a group_id is only allowed for its owner, and is routed to the
+// channel (upstream account) the group lives on.
+type VolcAssetGroup struct {
+	ID        int64  `json:"id" gorm:"primaryKey"`
+	UserID    int    `json:"user_id" gorm:"index"`
+	ChannelID int    `json:"channel_id" gorm:"uniqueIndex:idx_volc_asset_groups_channel_group,priority:1"`
+	GroupID   string `json:"group_id" gorm:"type:varchar(128);uniqueIndex:idx_volc_asset_groups_channel_group,priority:2"`
+	CreatedAt int64  `json:"created_at" gorm:"bigint"`
+}
+
 const (
 	// MaxVolcAssetReferences bounds how many distinct asset:// references a
 	// single video submission may carry.
@@ -38,6 +51,10 @@ const (
 	volcAssetURLPrefix         = "asset://"
 	maxVolcAssetReferenceDepth = 64
 )
+
+// ErrVolcAssetGroupOwnedByOther reports that a (channel, group_id) pair is
+// already recorded for a different user.
+var ErrVolcAssetGroupOwnedByOther = errors.New("volcengine asset group is owned by another user")
 
 // CollectVolcAssetReferences walks a decoded JSON value (maps and slices, at
 // any depth up to a fixed bound) and returns the logical IDs of every string
@@ -157,4 +174,48 @@ func ListVolcAssets(userID int, logicalGroupID, groupID string, offset, limit in
 	assets := make([]*VolcAsset, 0)
 	err := query.Order("id desc").Offset(offset).Limit(limit).Find(&assets).Error
 	return assets, total, err
+}
+
+// RecordVolcAssetGroup records that userID owns groupID on channelID. It is
+// idempotent for the same owner and never reassigns a pair already recorded
+// for another user (ErrVolcAssetGroupOwnedByOther).
+func RecordVolcAssetGroup(userID, channelID int, groupID string) error {
+	var existing VolcAssetGroup
+	err := DB.Where("channel_id = ? AND group_id = ?", channelID, groupID).First(&existing).Error
+	if err == nil {
+		if existing.UserID != userID {
+			return ErrVolcAssetGroupOwnedByOther
+		}
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	group := &VolcAssetGroup{UserID: userID, ChannelID: channelID, GroupID: groupID, CreatedAt: time.Now().Unix()}
+	createErr := DB.Create(group).Error
+	if createErr == nil {
+		return nil
+	}
+	// A concurrent insert may have won the unique index; re-read the winner.
+	if err := DB.Where("channel_id = ? AND group_id = ?", channelID, groupID).First(&existing).Error; err == nil {
+		if existing.UserID != userID {
+			return ErrVolcAssetGroupOwnedByOther
+		}
+		return nil
+	}
+	return createErr
+}
+
+// GetVolcAssetGroup returns the caller-owned group record for groupID, or
+// (nil, nil) when the caller owns no such group.
+func GetVolcAssetGroup(userID int, groupID string) (*VolcAssetGroup, error) {
+	var group VolcAssetGroup
+	err := DB.Where("user_id = ? AND group_id = ?", userID, groupID).Order("id desc").First(&group).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &group, nil
 }
