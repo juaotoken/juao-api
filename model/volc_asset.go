@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 )
 
@@ -24,6 +25,25 @@ type VolcAsset struct {
 	Status         string `json:"status" gorm:"type:varchar(32)"`
 	CreatedAt      int64  `json:"created_at" gorm:"bigint"`
 	UpdatedAt      int64  `json:"updated_at" gorm:"bigint"`
+}
+
+// GetEnabledChannelsByType returns every enabled channel of channelType. It is
+// served from the memory cache when enabled so callers share the cached
+// instance (multi-key polling state), and falls back to the database.
+func GetEnabledChannelsByType(channelType int) ([]*Channel, error) {
+	channels := make([]*Channel, 0)
+	if !common.MemoryCacheEnabled {
+		err := DB.Where("type = ? AND status = ?", channelType, common.ChannelStatusEnabled).Find(&channels).Error
+		return channels, err
+	}
+	channelSyncLock.RLock()
+	defer channelSyncLock.RUnlock()
+	for _, channel := range channelsIDM {
+		if channel.Type == channelType && channel.Status == common.ChannelStatusEnabled {
+			channels = append(channels, channel)
+		}
+	}
+	return channels, nil
 }
 
 // GetVolcAsset returns the asset owned by userID, or (nil, nil) when the
