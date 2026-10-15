@@ -20,6 +20,7 @@ import {
   CHANNEL_TYPES,
   CHANNEL_TYPE_VLLM,
   CHANNEL_TYPE_SGLANG,
+  CHANNEL_TYPE_VOLC_VIDEO,
 } from '../constants'
 
 // ============================================================================
@@ -67,6 +68,16 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       baseUrl: 'vLLM server address, without /v1',
       key: 'vLLM API key, or EMPTY if authentication is disabled',
       models: 'Models fetched from upstream /v1/models',
+    },
+  },
+  [CHANNEL_TYPE_VOLC_VIDEO]: {
+    id: CHANNEL_TYPE_VOLC_VIDEO,
+    name: CHANNEL_TYPES[CHANNEL_TYPE_VOLC_VIDEO],
+    icon: 'Doubao',
+    hints: {
+      baseUrl:
+        'Volcengine Seedance-compatible gateway address, e.g. https://lm.sls.cn',
+      key: 'Enter API key for this channel',
     },
   },
   1: {

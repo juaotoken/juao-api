@@ -95,6 +95,7 @@ const BRAND_AND_LITERAL_KEYS = new Set([
   'Uptime Kuma URL',
   'Vertex AI',
   'VolcEngine',
+  'Volcengine Video',
   'Waffo Pancake Dashboard',
   'Waffo Pancake MoR',
   'WeChat',
