@@ -1,5 +1,7 @@
 package volcvideo
 
+import "strings"
+
 // estimateTokens implements Volcengine Ark's billing-token formula for video
 // generation: tokens = seconds × W × H × 24 / 1024, where W×H is the maximum
 // pixel count of the requested resolution tier (16:9 reference frame).
@@ -11,9 +13,10 @@ func estimateTokens(seconds int, resolution string) float64 {
 // resolutionMaxPixels returns the maximum pixel dimensions Ark bills for a
 // resolution tier, using the 16:9 reference frame for each tier. An absent or
 // unrecognized resolution bills as 1080p so a missing/unknown value never
-// underbills relative to the documented tiers.
+// underbills relative to the documented tiers. The match is
+// case/whitespace-insensitive so "4K"/"1080P" resolve the same as "4k"/"1080p".
 func resolutionMaxPixels(resolution string) (width, height int) {
-	switch resolution {
+	switch strings.ToLower(strings.TrimSpace(resolution)) {
 	case "480p":
 		return 854, 480
 	case "720p":

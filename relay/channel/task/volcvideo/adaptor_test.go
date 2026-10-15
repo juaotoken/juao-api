@@ -299,3 +299,87 @@ func TestAdjustBillingOnComplete(t *testing.T) {
 		assert.Zero(t, got)
 	})
 }
+
+func TestResolutionMaxPixels(t *testing.T) {
+	cases := []struct {
+		name       string
+		resolution string
+		wantW      int
+		wantH      int
+	}{
+		{name: "lowercase 480p", resolution: "480p", wantW: 854, wantH: 480},
+		{name: "lowercase 720p", resolution: "720p", wantW: 1280, wantH: 720},
+		{name: "lowercase 1080p", resolution: "1080p", wantW: 1920, wantH: 1080},
+		{name: "lowercase 4k", resolution: "4k", wantW: 3840, wantH: 2160},
+		{name: "uppercase 4K normalizes like 4k", resolution: "4K", wantW: 3840, wantH: 2160},
+		{name: "uppercase with whitespace 1080P normalizes like 1080p", resolution: " 1080P ", wantW: 1920, wantH: 1080},
+		{name: "unknown resolution defaults to 1080p", resolution: "unknown", wantW: 1920, wantH: 1080},
+		{name: "absent resolution defaults to 1080p", resolution: "", wantW: 1920, wantH: 1080},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w, h := resolutionMaxPixels(tc.resolution)
+			assert.Equal(t, tc.wantW, w)
+			assert.Equal(t, tc.wantH, h)
+		})
+	}
+}
+
+func TestSanitizeTaskData(t *testing.T) {
+	a := &Adaptor{}
+
+	t.Run("drops upstream gateway account and billing fields", func(t *testing.T) {
+		body := []byte(`{
+			"code": "success",
+			"message": "",
+			"data": {
+				"id": 42,
+				"user_id": 7,
+				"group": "default",
+				"platform": "volcengine",
+				"upstream_task_id": "vid_internal_1",
+				"action": "text_to_video",
+				"submit_time": 1700000000,
+				"properties": {"input": "a cat"},
+				"quota": 123456,
+				"status": "SUCCESS",
+				"progress": "100%",
+				"result_url": "https://x/y.mp4",
+				"last_frame_url": "https://x/last.jpg",
+				"fail_reason": "",
+				"duration": 5,
+				"resolution": "720p",
+				"ratio": "16:9",
+				"model": "doubao-seedance-2-0",
+				"description": "a cat playing piano",
+				"total_tokens": 50638,
+				"video_created_at": 1700000001,
+				"video_updated_at": 1700000002
+			}
+		}`)
+
+		got := a.SanitizeTaskData(body)
+		require.NotNil(t, got)
+
+		var out map[string]any
+		require.NoError(t, common.Unmarshal(got, &out))
+
+		assert.Equal(t, "https://x/y.mp4", out["result_url"])
+		assert.Equal(t, float64(50638), out["total_tokens"])
+		assert.Equal(t, "720p", out["resolution"])
+		assert.Equal(t, "SUCCESS", out["status"])
+
+		for _, leaked := range []string{"quota", "user_id", "group", "platform", "upstream_task_id", "action", "submit_time", "id", "properties"} {
+			_, present := out[leaked]
+			assert.Falsef(t, present, "sanitized output must not contain %q", leaked)
+		}
+	})
+
+	t.Run("garbage body returns nil", func(t *testing.T) {
+		assert.Nil(t, a.SanitizeTaskData([]byte("not json")))
+	})
+
+	t.Run("non-object data returns nil", func(t *testing.T) {
+		assert.Nil(t, a.SanitizeTaskData([]byte(`{"code":"task_not_exist","data":null}`)))
+	})
+}

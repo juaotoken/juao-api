@@ -33,13 +33,12 @@ const maxSubmitResponseBytes = 1 << 20 // 1 MiB
 
 // Adaptor is the Go-native task adaptor for Volcengine Video.
 type Adaptor struct {
-	info        *relaycommon.RelayInfo
 	requestBody map[string]any
 }
 
-func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
-	a.info = info
-}
+// Init is a no-op: every TaskAdaptor method below receives *relaycommon.RelayInfo
+// directly as a parameter, so the adaptor never needs to cache it itself.
+func (a *Adaptor) Init(*relaycommon.RelayInfo) {}
 
 // ValidateRequestAndSetAction reads the raw submit body (Volcengine-native
 // shape, not the host's generic TaskSubmitReq), validates the fields that
@@ -213,8 +212,10 @@ func (a *Adaptor) ParseResponse(c *gin.Context, resp *http.Response, info *relay
 	return &channel.TaskSubmitResponse{UpstreamTaskID: taskID, TaskData: body}, nil
 }
 
+// GetModelList returns a copy of ModelList so callers cannot mutate the
+// package-level slice through the returned value.
 func (a *Adaptor) GetModelList() []string {
-	return ModelList
+	return append([]string(nil), ModelList...)
 }
 
 func (a *Adaptor) GetChannelName() string {
@@ -281,6 +282,47 @@ func (a *Adaptor) ParseTaskResult(task *model.Task, resp *http.Response, body []
 	}
 
 	return info, nil
+}
+
+// volcTaskDataAllowlist holds the only fields from the upstream poll
+// envelope's "data" object that may reach the end user through
+// TaskDto.Data. The upstream (lm.sls.cn) is itself a reseller gateway, and
+// its "data" object additionally carries that gateway's own account and
+// billing fields (quota, user_id, group, platform, upstream_task_id,
+// action, submit_time, id, properties, ...), which must never be forwarded
+// to our users.
+var volcTaskDataAllowlist = []string{
+	"status", "progress", "result_url", "last_frame_url", "fail_reason",
+	"duration", "resolution", "ratio", "model", "description",
+	"total_tokens", "video_created_at", "video_updated_at",
+}
+
+// SanitizeTaskData reduces an upstream poll body to the video fields our
+// users may see, dropping the upstream gateway's own billing and account
+// data. Returns nil if the body does not parse as JSON or its "data" field
+// is not a JSON object.
+func (a *Adaptor) SanitizeTaskData(body []byte) []byte {
+	var envelope map[string]any
+	if err := common.Unmarshal(body, &envelope); err != nil {
+		return nil
+	}
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	sanitized := make(map[string]any, len(volcTaskDataAllowlist))
+	for _, key := range volcTaskDataAllowlist {
+		if value, present := data[key]; present {
+			sanitized[key] = value
+		}
+	}
+
+	out, err := common.Marshal(sanitized)
+	if err != nil {
+		return nil
+	}
+	return out
 }
 
 // readLimited reads at most limit bytes from r, returning an error if the
