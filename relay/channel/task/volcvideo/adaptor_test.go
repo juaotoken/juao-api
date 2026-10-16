@@ -3,6 +3,7 @@ package volcvideo
 import (
 	"bytes"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -364,6 +365,7 @@ func TestConvertToOpenAIVideo(t *testing.T) {
 	task := &model.Task{TaskID: "task_1", Status: model.TaskStatusSuccess, Progress: "100%", FinishTime: 1700000100}
 	task.Properties.OriginModelName = "doubao-seedance-2-0"
 	task.PrivateData.ResultURL = "https://x/y.mp4"
+	task.Data = []byte(`{"status":"SUCCESS","duration":5,"resolution":"480p","ratio":"16:9"}`)
 	raw, err := (&Adaptor{}).ConvertToOpenAIVideo(task)
 	require.NoError(t, err)
 	var out map[string]any
@@ -371,7 +373,16 @@ func TestConvertToOpenAIVideo(t *testing.T) {
 	assert.Equal(t, "task_1", out["id"])
 	assert.Equal(t, "completed", out["status"])
 	assert.Equal(t, "doubao-seedance-2-0", out["model"])
-	assert.Equal(t, map[string]any{"url": "https://x/y.mp4"}, out["metadata"])
+	assert.Equal(t, "5", out["seconds"])
+	assert.Equal(t, map[string]any{"url": "https://x/y.mp4", "resolution": "480p", "ratio": "16:9"}, out["metadata"])
+
+	task = &model.Task{TaskID: "task_3", Status: model.TaskStatusFailure, Progress: "100%", FailReason: "content rejected"}
+	raw, err = (&Adaptor{}).ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+	out = nil
+	require.NoError(t, common.Unmarshal(raw, &out))
+	assert.Equal(t, "failed", out["status"])
+	assert.Equal(t, map[string]any{"message": "content rejected", "code": "task_failed"}, out["error"])
 
 	task = &model.Task{TaskID: "task_2", Status: model.TaskStatusInProgress, Progress: "30%"}
 	raw, err = (&Adaptor{}).ConvertToOpenAIVideo(task)
@@ -464,4 +475,107 @@ func TestSanitizeTaskData(t *testing.T) {
 	t.Run("non-object data returns nil", func(t *testing.T) {
 		assert.Nil(t, a.SanitizeTaskData([]byte(`{"code":"task_not_exist","data":null}`)))
 	})
+}
+
+func TestValidateRequestAcceptsOpenAIVideoShape(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       map[string]any
+		wantErr    string
+		wantAction string
+		wantBody   map[string]any
+	}{
+		{
+			name: "prompt with metadata passthrough",
+			body: map[string]any{"model": "doubao-seedance-2-0", "prompt": "太空大战", "metadata": map[string]any{
+				"resolution": "480p", "ratio": "16:9", "duration": 5, "generate_audio": false, "watermark": false,
+			}},
+			wantAction: constant.TaskActionTextToVideo,
+			wantBody: map[string]any{
+				"model": "doubao-seedance-2-0", "resolution": "480p", "ratio": "16:9", "duration": float64(5),
+				"generate_audio": false, "watermark": false,
+				"content": []any{map[string]any{"type": "text", "text": "太空大战"}},
+			},
+		},
+		{
+			name:       "seconds, size and input_reference",
+			body:       map[string]any{"model": "doubao-seedance-2-0", "prompt": "cat", "seconds": "8", "size": "1280x720", "input_reference": "https://example.com/cat.png"},
+			wantAction: constant.TaskActionImageToVideo,
+			wantBody: map[string]any{
+				"model": "doubao-seedance-2-0", "duration": float64(8), "resolution": "720p", "ratio": "16:9",
+				"content": []any{
+					map[string]any{"type": "text", "text": "cat"},
+					map[string]any{"type": "image_url", "image_url": map[string]any{"url": "https://example.com/cat.png"}},
+				},
+			},
+		},
+		{
+			name: "metadata wins over seconds and size",
+			body: map[string]any{"model": "doubao-seedance-2-0", "prompt": "cat", "seconds": 8, "size": "1920x1080",
+				"metadata": map[string]any{"duration": 5, "resolution": "480p", "ratio": "9:16"}},
+			wantAction: constant.TaskActionTextToVideo,
+			wantBody: map[string]any{
+				"model": "doubao-seedance-2-0", "duration": float64(5), "resolution": "480p", "ratio": "9:16",
+				"content": []any{map[string]any{"type": "text", "text": "cat"}},
+			},
+		},
+		{
+			name:    "metadata duration still bounded",
+			body:    map[string]any{"model": "doubao-seedance-2-0", "prompt": "cat", "metadata": map[string]any{"duration": 4000}},
+			wantErr: "invalid_duration",
+		},
+		{
+			name:    "fractional seconds rejected",
+			body:    map[string]any{"model": "doubao-seedance-2-0", "prompt": "cat", "seconds": "2.5"},
+			wantErr: "invalid_request",
+		},
+		{
+			name:    "empty prompt without references",
+			body:    map[string]any{"model": "doubao-seedance-2-0", "prompt": "  "},
+			wantErr: "missing_content",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newTestContext(t, tc.body)
+			info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{}}
+			a := &Adaptor{}
+			taskErr := a.ValidateRequestAndSetAction(c, info)
+			if tc.wantErr != "" {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, tc.wantErr, taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			assert.Equal(t, tc.wantAction, info.Action)
+
+			info.UpstreamModelName = "doubao-seedance-2-0"
+			reader, err := a.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			raw, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			var got map[string]any
+			require.NoError(t, common.Unmarshal(raw, &got))
+			assert.Equal(t, tc.wantBody, got)
+		})
+	}
+}
+
+func TestValidateRequestAcceptsOpenAIVideoMultipart(t *testing.T) {
+	var buf bytes.Buffer
+	writer := multipart.NewWriter(&buf)
+	require.NoError(t, writer.WriteField("model", "doubao-seedance-2-0"))
+	require.NoError(t, writer.WriteField("prompt", "太空大战"))
+	require.NoError(t, writer.WriteField("metadata", `{"resolution":"480p","duration":5}`))
+	require.NoError(t, writer.Close())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", &buf)
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+
+	info := &relaycommon.RelayInfo{TaskRelayInfo: &relaycommon.TaskRelayInfo{}, ChannelMeta: &relaycommon.ChannelMeta{}}
+	a := &Adaptor{}
+	require.Nil(t, a.ValidateRequestAndSetAction(c, info))
+	assert.Equal(t, "480p", a.requestBody["resolution"])
+	assert.Equal(t, float64(5), a.requestBody["duration"])
+	assert.Equal(t, []any{map[string]any{"type": "text", "text": "太空大战"}}, a.requestBody["content"])
 }

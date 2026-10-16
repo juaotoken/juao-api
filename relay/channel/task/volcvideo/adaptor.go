@@ -14,6 +14,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -22,6 +23,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -60,8 +62,19 @@ func (a *Adaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.
 	}
 
 	var body map[string]any
-	if err := common.Unmarshal(raw, &body); err != nil {
+	if strings.HasPrefix(c.GetHeader("Content-Type"), "multipart/form-data") {
+		body, err = multipartRequestBody(c)
+		if err != nil {
+			return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
+		}
+	} else if err := common.Unmarshal(raw, &body); err != nil {
 		return service.TaskErrorWrapperLocal(err, "invalid_json", http.StatusBadRequest)
+	}
+	// POST /v1/videos clients send the OpenAI Videos shape; convert it so
+	// both entry points share the native validation below.
+	body, err = normalizeOpenAIVideoRequest(body)
+	if err != nil {
+		return service.TaskErrorWrapperLocal(err, "invalid_request", http.StatusBadRequest)
 	}
 
 	modelName, _ := body["model"].(string)
@@ -71,7 +84,7 @@ func (a *Adaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.
 
 	content, ok := body["content"].([]any)
 	if !ok || len(content) == 0 {
-		return service.TaskErrorWrapperLocal(errors.New("content is required"), "missing_content", http.StatusBadRequest)
+		return service.TaskErrorWrapperLocal(errors.New("content or prompt is required"), "missing_content", http.StatusBadRequest)
 	}
 
 	if rawDuration, present := body["duration"]; present {
@@ -212,10 +225,35 @@ func (a *Adaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		return nil, errors.New("task is required")
 	}
 	video := task.ToOpenAIVideo()
-	if task.Status == model.TaskStatusSuccess {
+	// task.Data is the sanitized poll snapshot (see SanitizeTaskData).
+	var snapshot struct {
+		Duration   tokenCount `json:"duration"`
+		Resolution string     `json:"resolution"`
+		Ratio      string     `json:"ratio"`
+	}
+	if len(task.Data) > 0 {
+		_ = common.Unmarshal(task.Data, &snapshot)
+	}
+	if snapshot.Duration > 0 {
+		video.Seconds = strconv.Itoa(int(snapshot.Duration))
+	}
+	if snapshot.Resolution != "" {
+		video.SetMetadata("resolution", snapshot.Resolution)
+	}
+	if snapshot.Ratio != "" {
+		video.SetMetadata("ratio", snapshot.Ratio)
+	}
+	switch task.Status {
+	case model.TaskStatusSuccess:
 		if resultURL := task.GetResultURL(); resultURL != "" {
 			video.SetMetadata("url", resultURL)
 		}
+	case model.TaskStatusFailure:
+		message := task.FailReason
+		if message == "" {
+			message = "task failed"
+		}
+		video.Error = &kitdto.OpenAIVideoError{Message: message, Code: "task_failed"}
 	}
 	return common.Marshal(video)
 }

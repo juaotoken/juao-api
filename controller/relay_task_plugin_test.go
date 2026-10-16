@@ -131,6 +131,24 @@ func TestPresentTaskSubmissionUsesHostOpenAIVideoCreateReceipt(t *testing.T) {
 	assert.NotContains(t, recorder.Body.String(), "task_id")
 }
 
+func TestPresentTaskSubmissionUnclaimedOpenAIVideoCreateReturnsVideoObject(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader(`{"model":"doubao-seedance-2-0","prompt":"x"}`))
+	task := &model.Task{
+		TaskID:     "task_public",
+		Status:     model.TaskStatusNotStart,
+		Progress:   "0%",
+		CreatedAt:  789,
+		Properties: model.Properties{OriginModelName: "doubao-seedance-2-0"},
+	}
+	outcome := &taskSubmissionOutcome{Result: &relay.TaskSubmitResult{}, Task: task, RelayInfo: &relaycommon.RelayInfo{}}
+
+	presentTaskSubmission(c, outcome)
+
+	assert.JSONEq(t, `{"id":"task_public","object":"video","model":"doubao-seedance-2-0","status":"queued","progress":0,"created_at":789}`, recorder.Body.String())
+}
+
 func TestExecuteTaskSubmissionRefundsWhenInsertFails(t *testing.T) {
 	events := make([]string, 0, 3)
 	database := setupTaskSubmissionDatabase(t, false, &events)
