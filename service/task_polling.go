@@ -52,6 +52,13 @@ type TaskCompletionSettler interface {
 	SettleOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) (quota int, clamp *common.QuotaClamp, handled bool)
 }
 
+// TaskSettlementLogProvider lets an adaptor attach upstream billing tokens,
+// the generation time, and display-only metadata to its completion
+// settlement log. It never changes the settled quota.
+type TaskSettlementLogProvider interface {
+	TaskSettlementLog(task *model.Task, taskResult *relaycommon.TaskInfo) relaycommon.TaskLogUsage
+}
+
 const (
 	pollClassOK           = "ok"
 	pollClassOtherClient  = "other_client"
@@ -706,6 +713,11 @@ func truncateBase64(s string) string {
 //
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	var logUsage *relaycommon.TaskLogUsage
+	if provider, ok := adaptor.(TaskSettlementLogProvider); ok && task.Status == model.TaskStatusSuccess {
+		usage := provider.TaskSettlementLog(task, taskResult)
+		logUsage = &usage
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
 		// 用量表达式结算只适用于成功任务；失败任务由调用方全额退款。
 		if task.Status == model.TaskStatusFailure {
@@ -721,7 +733,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		}
 		bc.TieredSnapshot.UsageFacts = usageFacts
 		bc.TieredSnapshot.EstimatedTier = result.MatchedTier
-		RecalculateTaskQuota(ctx, task, result.ActualQuotaAfterGroup, "任务用量表达式结算", result.Clamp)
+		RecalculateTaskQuotaWithLog(ctx, task, result.ActualQuotaAfterGroup, "任务用量表达式结算", logUsage, result.Clamp)
 		return true
 	}
 	// 按次计费的成功任务保持预扣；失败任务由调用方全额退款。
@@ -732,7 +744,7 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 	// adaptor 完全接管结算（额度可为 0，例如免费分组），不再回落 token 重算。
 	if settler, ok := adaptor.(TaskCompletionSettler); ok && task.Status == model.TaskStatusSuccess {
 		if quota, clamp, handled := settler.SettleOnComplete(task, taskResult); handled {
-			RecalculateTaskQuota(ctx, task, quota, "adaptor token settlement", clamp)
+			RecalculateTaskQuotaWithLog(ctx, task, quota, "adaptor token settlement", logUsage, clamp)
 			return true
 		}
 	}

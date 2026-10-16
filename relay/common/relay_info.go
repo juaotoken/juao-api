@@ -971,7 +971,18 @@ type OriginTaskRef struct {
 	Data           []byte
 }
 
+// TaskLogUsage carries the upstream billing tokens, generation time, and
+// display-only metadata a Go-native task adaptor attaches to its task logs.
+// The values never change the charged quota.
+type TaskLogUsage struct {
+	CompletionTokens int
+	UseTimeSeconds   int
+	Other            map[string]any
+}
+
 type TaskRelayInfo struct {
+	// LogUsage is what the adaptor reports for the submit consume log.
+	LogUsage     *TaskLogUsage
 	Action       string
 	OriginTaskID string
 	// PublicTaskID 是提交时预生成的 task_xxxx 格式公开 ID，
