@@ -36,6 +36,17 @@ const i18nKeys = {
   'Group Ratio': 'Group Ratio',
   'Total Cost': 'Total Cost',
   'Usage parameters': 'Usage parameters',
+  'Upstream billing tokens': 'Upstream billing tokens',
+  'Video Parameters': 'Video Parameters',
+  'Requested Duration': 'Requested Duration',
+  'Video Duration': 'Video Duration',
+  Resolution: 'Resolution',
+  'Aspect Ratio': 'Aspect Ratio',
+  'Generation Time': 'Generation Time',
+  'Token Breakdown': 'Token Breakdown',
+  'Input Tokens': 'Input Tokens',
+  'Output Tokens': 'Output Tokens',
+  seconds: 'seconds',
 }
 
 function makeLog(other: LogOtherData): UsageLog {
@@ -230,5 +241,138 @@ describe('usage facts billing details', () => {
     expect(screen.queryByText('resolution')).toBeNull()
     expect(screen.queryByText('seconds')).toBeNull()
     expect(screen.getByText('Total Cost')).toBeInTheDocument()
+  })
+})
+
+describe('task log tokens and video parameters', () => {
+  test('shows the upstream billing token total instead of an input/output pair', () => {
+    const other: LogOtherData = {
+      is_task: true,
+      billing_mode: 'tiered_expr',
+      expr_b64: btoa('tier("720p", u("tokens") * 0.00001)'),
+      matched_tier: '720p',
+      usage_facts: { tokens: 50638, resolution: '720p', video_input: 'none' },
+    }
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const freshAt = Date.now() + 60_000
+    queryClient.setQueryData(['status'], {}, { updatedAt: freshAt })
+    queryClient.setQueryData(
+      ['pricing'],
+      { data: [], vendors: [] },
+      { updatedAt: freshAt }
+    )
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DetailsDialog
+          log={{ ...makeLog(other), completion_tokens: 50638 }}
+          isAdmin={false}
+          isRoot={false}
+          open
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+
+    const label = screen.getByText('Upstream billing tokens')
+    expect(label).toBeVisible()
+    expect(label.nextElementSibling).toHaveTextContent('50,638')
+    expect(screen.queryByText('Input Tokens')).toBeNull()
+    expect(screen.queryByText('Output Tokens')).toBeNull()
+    queryClient.clear()
+  })
+
+  test('shows the video parameters reported by the serving adaptor', () => {
+    const other: LogOtherData = {
+      is_task: true,
+      video_requested_seconds: 5,
+      video_seconds: 5,
+      video_resolution: '720p',
+      video_ratio: '16:9',
+      video_generation_seconds: 42,
+    }
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const freshAt = Date.now() + 60_000
+    queryClient.setQueryData(['status'], {}, { updatedAt: freshAt })
+    queryClient.setQueryData(
+      ['pricing'],
+      { data: [], vendors: [] },
+      { updatedAt: freshAt }
+    )
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DetailsDialog
+          log={makeLog(other)}
+          isAdmin={false}
+          isRoot={false}
+          open
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+
+    expect(screen.getByText('Video Parameters')).toBeVisible()
+    expect(rowValue('Requested Duration')).toBe('5 seconds')
+    expect(rowValue('Video Duration')).toBe('5 seconds')
+    expect(rowValue('Resolution')).toBe('720p')
+    expect(rowValue('Aspect Ratio')).toBe('16:9')
+    expect(rowValue('Generation Time')).not.toBeNull()
+    queryClient.clear()
+  })
+
+  test('omits the video section when the log carries no video parameters', () => {
+    const queryClient = renderDetails({ is_task: true })
+    expect(screen.queryByText('Video Parameters')).toBeNull()
+    queryClient.clear()
+  })
+})
+
+describe('task refund settlement log', () => {
+  test('shows the tiered breakdown for a task refund log', () => {
+    const expression = 'tier("720p", u("tokens") * 0.00001)'
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const freshAt = Date.now() + 60_000
+    queryClient.setQueryData(['status'], {}, { updatedAt: freshAt })
+    queryClient.setQueryData(
+      ['pricing'],
+      { data: [], vendors: [] },
+      { updatedAt: freshAt }
+    )
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DetailsDialog
+          log={{
+            ...makeLog({
+              is_task: true,
+              billing_mode: 'tiered_expr',
+              expr_b64: btoa(expression),
+              matched_tier: '720p',
+              usage_facts: { tokens: 1500, resolution: '720p' },
+              task_id: 'task_abc',
+            }),
+            type: 6,
+            completion_tokens: 1500,
+            use_time: 42,
+          }}
+          isAdmin={false}
+          isRoot={false}
+          open
+          onOpenChange={() => undefined}
+        />
+      </QueryClientProvider>
+    )
+
+    expect(screen.getByText('Refund Details')).toBeVisible()
+    expect(screen.getAllByText('Dynamic Pricing').length).toBeGreaterThan(0)
+    expect(rowValue('Matched Tier')).toBe('720p')
+    queryClient.clear()
   })
 })

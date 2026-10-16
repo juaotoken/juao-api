@@ -725,6 +725,32 @@ export function useCommonLogsColumns(
 
           const promptTokens = log.prompt_tokens || 0
           const completionTokens = log.completion_tokens || 0
+
+          // A task's only token count is the upstream billing token total
+          // (estimated at submit, measured at settlement); it is not an
+          // input/output pair, so show the single number instead of "0 / N".
+          if (other?.is_task === true) {
+            if (completionTokens === 0) {
+              return <span className='text-muted-foreground text-xs'>-</span>
+            }
+            return (
+              <TooltipProvider delay={100}>
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <span className='font-mono text-xs font-medium tabular-nums' />
+                    }
+                  >
+                    {completionTokens.toLocaleString()}
+                  </TooltipTrigger>
+                  <TooltipContent side='top'>
+                    {t('Upstream billing tokens')}
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
+            )
+          }
+
           if (promptTokens === 0 && completionTokens === 0) {
             return <span className='text-muted-foreground text-xs'>-</span>
           }

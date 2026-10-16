@@ -6802,6 +6802,13 @@
     "Group retry setting": "分組重試設定",
     "All costs": "全部費用",
     "Cost is 0": "費用為 0",
-    "Cost is not 0": "費用非 0"
+    "Cost is not 0": "費用非 0",
+    "Upstream billing tokens": "上游計費 Token",
+    "Video Parameters": "影片參數",
+    "Requested Duration": "請求時長",
+    "Video Duration": "影片時長",
+    "Resolution": "解析度",
+    "Aspect Ratio": "畫面比例",
+    "Generation Time": "生成耗時"
   }
 }

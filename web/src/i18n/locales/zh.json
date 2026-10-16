@@ -6802,6 +6802,13 @@
     "Group retry setting": "分组重试设置",
     "All costs": "全部费用",
     "Cost is 0": "费用为 0",
-    "Cost is not 0": "费用非 0"
+    "Cost is not 0": "费用非 0",
+    "Upstream billing tokens": "上游计费 Token",
+    "Video Parameters": "视频参数",
+    "Requested Duration": "请求时长",
+    "Video Duration": "视频时长",
+    "Resolution": "分辨率",
+    "Aspect Ratio": "画幅比例",
+    "Generation Time": "生成耗时"
   }
 }

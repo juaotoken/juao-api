@@ -6802,6 +6802,13 @@
     "Group retry setting": "グループのリトライ設定",
     "All costs": "すべての費用",
     "Cost is 0": "費用が 0",
-    "Cost is not 0": "費用が 0 以外"
+    "Cost is not 0": "費用が 0 以外",
+    "Upstream billing tokens": "上流の課金トークン",
+    "Video Parameters": "動画パラメータ",
+    "Requested Duration": "リクエストされた長さ",
+    "Video Duration": "動画の長さ",
+    "Resolution": "解像度",
+    "Aspect Ratio": "アスペクト比",
+    "Generation Time": "生成時間"
   }
 }

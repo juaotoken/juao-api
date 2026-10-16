@@ -6802,6 +6802,13 @@
     "Group retry setting": "Cài đặt nhóm",
     "All costs": "Mọi chi phí",
     "Cost is 0": "Chi phí bằng 0",
-    "Cost is not 0": "Chi phí khác 0"
+    "Cost is not 0": "Chi phí khác 0",
+    "Upstream billing tokens": "Token tính phí từ upstream",
+    "Video Parameters": "Tham số video",
+    "Requested Duration": "Thời lượng yêu cầu",
+    "Video Duration": "Thời lượng video",
+    "Resolution": "Độ phân giải",
+    "Aspect Ratio": "Tỷ lệ khung hình",
+    "Generation Time": "Thời gian tạo"
   }
 }

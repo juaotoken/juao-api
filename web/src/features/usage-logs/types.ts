@@ -277,6 +277,14 @@ export interface LogOtherData {
   fee_quota?: number
   // Task-related fields (for refund logs, type=6)
   is_task?: boolean
+  // Video task parameters reported by the serving adaptor: the requested clip
+  // duration (submit log) and the delivered duration, resolution and aspect
+  // ratio (settlement log), plus the wall-clock generation time in seconds.
+  video_requested_seconds?: number
+  video_seconds?: number
+  video_resolution?: string
+  video_ratio?: string
+  video_generation_seconds?: number
   // The submitting request returned the task result itself (an immediate
   // result, or an OpenAI Images request the gateway waited on).
   task_sync?: boolean

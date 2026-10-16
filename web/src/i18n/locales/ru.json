@@ -6802,6 +6802,13 @@
     "Group retry setting": "Настройка группы",
     "All costs": "Любая стоимость",
     "Cost is 0": "Стоимость равна 0",
-    "Cost is not 0": "Стоимость не 0"
+    "Cost is not 0": "Стоимость не 0",
+    "Upstream billing tokens": "Токены тарификации вышестоящего сервиса",
+    "Video Parameters": "Параметры видео",
+    "Requested Duration": "Запрошенная длительность",
+    "Video Duration": "Длительность видео",
+    "Resolution": "Разрешение",
+    "Aspect Ratio": "Соотношение сторон",
+    "Generation Time": "Время генерации"
   }
 }

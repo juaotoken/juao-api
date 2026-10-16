@@ -6802,6 +6802,13 @@
     "Group retry setting": "Réglage de groupe",
     "All costs": "Tous les coûts",
     "Cost is 0": "Coût égal à 0",
-    "Cost is not 0": "Coût différent de 0"
+    "Cost is not 0": "Coût différent de 0",
+    "Upstream billing tokens": "Tokens de facturation amont",
+    "Video Parameters": "Paramètres de la vidéo",
+    "Requested Duration": "Durée demandée",
+    "Video Duration": "Durée de la vidéo",
+    "Resolution": "Résolution",
+    "Aspect Ratio": "Format d'image",
+    "Generation Time": "Durée de génération"
   }
 }
