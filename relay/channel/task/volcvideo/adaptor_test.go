@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/pkg/taskusage"
+	"github.com/QuantumNous/new-api/plugins"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -908,4 +909,70 @@ func TestUsageSchemaMutationsDoNotLeak(t *testing.T) {
 	fresh, freshExamples, _ := taskusage.ForModel("doubao-seedance-2-0")
 	assert.Equal(t, "token", fresh["tokens"].Unit)
 	assert.NotEqual(t, "mutated", freshExamples[0].Facts["tokens"])
+}
+
+// TestUsageSchemaMirrorsDoubaoPlugin pins the Go-native Seedance 2.0 usage
+// profile to the doubao task plugin's, so one task expression prices the model
+// identically whichever of the two serves it.
+func TestUsageSchemaMirrorsDoubaoPlugin(t *testing.T) {
+	source, err := plugins.Source("doubao")
+	require.NoError(t, err)
+
+	// The plugin declares the same capability profile this adaptor does. The
+	// plugin keys carry the Ark endpoint suffix (e.g. -260128), so match the
+	// client-facing name as a prefix of the quoted capability key.
+	lines := strings.Split(source, "\n")
+	for name, resolutions := range seedanceResolutions {
+		line := ""
+		for _, candidate := range lines {
+			trimmed := strings.TrimSpace(candidate)
+			if strings.HasPrefix(trimmed, `"`+name) && strings.Contains(trimmed, "{ resolutions: [") {
+				line = trimmed
+				break
+			}
+		}
+		require.NotEmptyf(t, line, "the doubao plugin must declare a profile for %s", name)
+		for _, resolution := range resolutions {
+			assert.Contains(t, line, `"`+resolution+`"`, name)
+		}
+		assert.Contains(t, line, "videoInput: true", name)
+	}
+	// Keys and localized labels must match for expressions to be portable.
+	for _, snippet := range []string{
+		"tokens: {",
+		`unit: "token"`,
+		`description: { en: "Billing token unit price", zh: "计费 Token 单价" }`,
+		`description: { en: "Output video resolution", zh: "输出视频分辨率" }`,
+		`description: { en: "Reference video input", zh: "参考视频输入" }`,
+		`enum: ["none", "video"]`,
+		`{ en: "No reference video", zh: "无参考视频" }`,
+		`{ en: "With reference video", zh: "有参考视频" }`,
+	} {
+		assert.Contains(t, source, snippet)
+	}
+	// The token estimate formula and pixel table must agree.
+	assert.Contains(t, source, "(seconds * dims[0] * dims[1] * 24) / 1024")
+	for resolution, want := range map[string][2]int{"480p": {854, 480}, "720p": {1280, 720}, "1080p": {1920, 1080}, "4k": {3840, 2160}} {
+		width, height := resolutionMaxPixels(resolution)
+		assert.Equal(t, want, [2]int{width, height}, resolution)
+	}
+}
+
+// TestDefaultResolutionMirrorsDoubaoPlugin pins the reservation default: the
+// model's highest tier up to 1080p, matching the plugin's videoResolution.
+func TestDefaultResolutionMirrorsDoubaoPlugin(t *testing.T) {
+	for model, want := range map[string]string{
+		"doubao-seedance-2-0":      "1080p",
+		"doubao-seedance-2-0-fast": "720p",
+		"doubao-seedance-2-0-mini": "720p",
+	} {
+		body := map[string]any{"duration": float64(5)}
+		info := &relaycommon.RelayInfo{
+			OriginModelName: model,
+			TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		}
+		facts, err := (&Adaptor{requestBody: body}).ExtractUsageFactsValidated(newTestContext(t, body), info)
+		require.NoError(t, err, model)
+		assert.Equal(t, want, facts["resolution"], model)
+	}
 }
