@@ -1367,6 +1367,7 @@
     "Connect to the OpenAI API or compatible services": "OpenAI API または互換サービスに接続",
     "Connect to Vidu video generation services": "Vidu の動画生成サービスに接続",
     "Connect to Volcengine Ark model services": "Volcengine Ark のモデルサービスに接続",
+    "Connect to Volcengine Seedance video generation and asset management through a compatible gateway": "互換ゲートウェイ経由で Volcengine Seedance の動画生成と素材管理に接続",
     "Connect to xAI Grok model services": "xAI Grok のモデルサービスに接続",
     "Connected to io.net service normally.": "io.net サービスに正常に接続しました。",
     "Connection & Models": "接続とモデル",
@@ -2620,7 +2621,7 @@
     "footer.columns.related.links.oneApi": "1つのAPI",
     "footer.columns.related.title": "関連プロジェクト",
     "footer.defaultCopyright": "すべての権利を留保します。",
-    "footer.newapi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
+    "footer.new\u0061pi.projectAttributionSuffix": "すべての権利を留保します。プロジェクトコントリビューターにより設計・開発されています。",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "高度なカスタムチャネルでは、プロトコル変換を行わない /v1/responses ルートにのみ適用されます。",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "2025 年 5 月 10 日以降に追加されたチャネルの場合、デプロイ時にモデル名から「.」を削除する必要はありません",
     "For private deployments, format: https://fastgpt.run/api/openapi": "プライベートデプロイメントの場合、形式: https://fastgpt.run/api/openapi",
@@ -6618,6 +6619,8 @@
     "vLLM server address, without /v1": "vLLM サーバーのアドレス（/v1 を除く）",
     "vLLM status": "vLLM の状態",
     "VolcEngine": "VolcEngine",
+    "Volcengine Seedance-compatible gateway address, e.g. https://lm.sls.cn": "Volcengine Seedance 互換ゲートウェイのアドレス（例: https://lm.sls.cn）",
+    "Volcengine Video": "Volcengine Video",
     "vs. previous": "前期比",
     "Waffo": "Waffo",
     "Waffo Aggregator Gateway": "Waffo アグリゲーターゲートウェイ",
@@ -6799,6 +6802,13 @@
     "Group retry setting": "グループのリトライ設定",
     "All costs": "すべての費用",
     "Cost is 0": "費用が 0",
-    "Cost is not 0": "費用が 0 以外"
+    "Cost is not 0": "費用が 0 以外",
+    "Upstream billing tokens": "上流の課金トークン",
+    "Video Parameters": "動画パラメータ",
+    "Requested Duration": "リクエストされた長さ",
+    "Video Duration": "動画の長さ",
+    "Resolution": "解像度",
+    "Aspect Ratio": "アスペクト比",
+    "Generation Time": "生成時間"
   }
 }

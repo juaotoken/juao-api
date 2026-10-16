@@ -91,6 +91,9 @@ export const STATIC_I18N_KEYS = [
   'Connect to self-hosted models served by vLLM',
   'vLLM server address, without /v1',
   'vLLM API key, or EMPTY if authentication is disabled',
+  'Volcengine Video',
+  'Connect to Volcengine Seedance video generation and asset management through a compatible gateway',
+  'Volcengine Seedance-compatible gateway address, e.g. https://lm.sls.cn',
 
   'Price per image',
   'Per image',

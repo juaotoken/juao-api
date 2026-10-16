@@ -749,6 +749,13 @@ func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
 			return
 		}
 	}
+	// POST /v1/videos served by a Go adaptor (no plugin claim) still answers
+	// with the OpenAI video object its clients expect.
+	if c.Request != nil && c.Request.Method == http.MethodPost && c.Request.URL.Path == "/v1/videos" {
+		diagnostics.present(outcome.Task, "openai_video_create")
+		c.JSON(http.StatusOK, outcome.Task.ToOpenAIVideo())
+		return
+	}
 	createdAt := outcome.Task.CreatedAt
 	if createdAt == 0 {
 		createdAt = outcome.Task.SubmitTime

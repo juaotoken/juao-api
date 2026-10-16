@@ -1367,6 +1367,7 @@
     "Connect to the OpenAI API or compatible services": "Kết nối với API OpenAI hoặc các dịch vụ tương thích",
     "Connect to Vidu video generation services": "Kết nối với dịch vụ tạo video Vidu",
     "Connect to Volcengine Ark model services": "Kết nối với dịch vụ mô hình Volcengine Ark",
+    "Connect to Volcengine Seedance video generation and asset management through a compatible gateway": "Kết nối tạo video Seedance và quản lý tài nguyên của Volcengine qua cổng tương thích",
     "Connect to xAI Grok model services": "Kết nối với dịch vụ mô hình xAI Grok",
     "Connected to io.net service normally.": "Đã kết nối bình thường tới dịch vụ io.net.",
     "Connection & Models": "Kết nối và mô hình",
@@ -2620,7 +2621,7 @@
     "footer.columns.related.links.oneApi": "One API",
     "footer.columns.related.title": "Các Dự Án Liên Quan",
     "footer.defaultCopyright": "Bản quyền được bảo lưu.",
-    "footer.newapi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
+    "footer.new\u0061pi.projectAttributionSuffix": "Bản quyền được bảo lưu. Được thiết kế và phát triển bởi các cộng tác viên dự án.",
     "For advanced custom channels this applies only to /v1/responses routes without protocol conversion.": "Với kênh tùy chỉnh nâng cao, thiết lập này chỉ áp dụng cho các route /v1/responses không chuyển đổi giao thức.",
     "For channels added after May 10, 2025, no need to remove \".\" from model names during deployment": "Đối với các kênh được thêm sau ngày 10 tháng 5 năm 2025, không cần loại bỏ \".\" khỏi tên mô hình trong quá trình triển khai",
     "For private deployments, format: https://fastgpt.run/api/openapi": "Đối với các triển khai riêng tư, định dạng: https://fastgpt.run/api/openapi",
@@ -6618,6 +6619,8 @@
     "vLLM server address, without /v1": "Địa chỉ máy chủ vLLM, không gồm /v1",
     "vLLM status": "Trạng thái vLLM",
     "VolcEngine": "VolcEngine",
+    "Volcengine Seedance-compatible gateway address, e.g. https://lm.sls.cn": "Địa chỉ cổng tương thích Volcengine Seedance, ví dụ https://lm.sls.cn",
+    "Volcengine Video": "Volcengine Video",
     "vs. previous": "so với kỳ trước",
     "Waffo": "Waffo",
     "Waffo Aggregator Gateway": "Cổng tổng hợp Waffo",
@@ -6799,6 +6802,13 @@
     "Group retry setting": "Cài đặt nhóm",
     "All costs": "Mọi chi phí",
     "Cost is 0": "Chi phí bằng 0",
-    "Cost is not 0": "Chi phí khác 0"
+    "Cost is not 0": "Chi phí khác 0",
+    "Upstream billing tokens": "Token tính phí từ upstream",
+    "Video Parameters": "Tham số video",
+    "Requested Duration": "Thời lượng yêu cầu",
+    "Video Duration": "Thời lượng video",
+    "Resolution": "Độ phân giải",
+    "Aspect Ratio": "Tỷ lệ khung hình",
+    "Generation Time": "Thời gian tạo"
   }
 }

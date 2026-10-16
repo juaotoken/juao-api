@@ -46,6 +46,7 @@ import {
   CHANNEL_TYPE_OLLAMA,
   CHANNEL_TYPE_SGLANG,
   CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_VOLC_VIDEO,
 } from '../../constants'
 import { channelSchema, type Channel } from '../../types'
 import { ChannelPluginExtensions } from '../channel-plugin-extensions'
@@ -288,6 +289,12 @@ test.each([
     label: /^Base URL/,
     url: 'SGLang server address, without /v1',
     savedUrl: 'http://localhost:30000',
+  },
+  {
+    type: CHANNEL_TYPE_VOLC_VIDEO,
+    label: /^Base URL/,
+    url: 'Volcengine Seedance-compatible gateway address, e.g. https://lm.sls.cn',
+    savedUrl: 'https://custom-gateway.example',
   },
 ])(
   'editing type $type keeps the URL placeholder out of the saved address',

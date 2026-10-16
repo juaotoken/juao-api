@@ -37,6 +37,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/sub2api"
 	"github.com/QuantumNous/new-api/relay/channel/submodel"
 	jspluginadaptor "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
+	"github.com/QuantumNous/new-api/relay/channel/task/volcvideo"
 	"github.com/QuantumNous/new-api/relay/channel/tencent"
 	"github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/relay/channel/volcengine"
@@ -185,7 +186,17 @@ func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, strin
 	return "invalid_api_platform", fmt.Sprintf("invalid api platform: %s", platform)
 }
 
+// isVolcVideoPlatform reports whether platform names the Go-native
+// Volcengine Video task adaptor (channel type 500), which has no JS plugin
+// counterpart and so must be resolved before any plugin lookup.
+func isVolcVideoPlatform(platform constant.TaskPlatform) bool {
+	return platform == constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcVideo))
+}
+
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	if isVolcVideoPlatform(platform) {
+		return &volcvideo.Adaptor{}
+	}
 	plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform)
 	if !ok {
 		return nil
@@ -219,6 +230,9 @@ func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (c
 			}
 			return platform, nil
 		}
+	}
+	if isVolcVideoPlatform(platform) {
+		return platform, &volcvideo.Adaptor{}
 	}
 	generation := pluginruntime.DefaultRegistry.Generation()
 	plugin, ok := ResolveTaskPluginForPlatform(generation, platform)

@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -968,6 +969,65 @@ func TestUpdateVideoSingleTaskPollClassification(t *testing.T) {
 	}
 }
 
+// sanitizingPollingAdaptor extends scriptedPollingAdaptor with
+// SanitizeTaskData, so it satisfies TaskDataSanitizer, to verify that
+// updateVideoSingleTask prefers the adaptor's sanitizer over the generic
+// redactVideoResponseBody fallback.
+type sanitizingPollingAdaptor struct {
+	scriptedPollingAdaptor
+	sanitized []byte
+}
+
+func (a *sanitizingPollingAdaptor) SanitizeTaskData(body []byte) []byte {
+	return a.sanitized
+}
+
+// TestUpdateVideoSingleTaskVolcVideoChannelUsesAdaptorAndSanitizer covers the
+// channel-type-500 (Volcengine Video) path end to end: the upstream answers
+// in new-api's own {"code":"success","data":{...}} envelope shape, which
+// must NOT be decoded as model.Task (that would drop result_url and
+// total_tokens), and the stored task.Data must come from the adaptor's
+// sanitizer rather than the raw upstream body (which carries the reseller
+// gateway's own quota/user_id fields).
+func TestUpdateVideoSingleTaskVolcVideoChannelUsesAdaptorAndSanitizer(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID = 512, 512, 512
+	const initialQuota, preConsumed, tokenRemain = 10_000, 4_000, 7_000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-volcvideo", tokenRemain)
+	ch := &model.Channel{Id: channelID, Type: constant.ChannelTypeVolcVideo, Name: "volcvideo", Key: "sk-test", Status: common.ChannelStatusEnabled}
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_volcvideo"
+	task.PrivateData.UpstreamTaskID = "upstream_volcvideo"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	upstreamBody := []byte(`{"code":"success","data":{"status":"SUCCESS","result_url":"https://x/v.mp4","total_tokens":123,"quota":999,"user_id":5}}`)
+	sanitizedData := []byte(`{"status":"SUCCESS","result_url":"https://x/v.mp4","total_tokens":123}`)
+	adaptor := &sanitizingPollingAdaptor{
+		scriptedPollingAdaptor: scriptedPollingAdaptor{
+			statusCode: http.StatusOK,
+			body:       upstreamBody,
+			parse: &relaycommon.TaskInfo{
+				Status: string(model.TaskStatusSuccess),
+				Url:    "https://x/v.mp4",
+			},
+		},
+		sanitized: sanitizedData,
+	}
+
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, ch, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	}))
+
+	var persisted model.Task
+	require.NoError(t, model.DB.First(&persisted, task.ID).Error)
+	assert.EqualValues(t, model.TaskStatusSuccess, persisted.Status)
+	assert.Equal(t, "https://x/v.mp4", persisted.PrivateData.ResultURL)
+	assert.JSONEq(t, string(sanitizedData), string(persisted.Data))
+	assert.NotContains(t, string(persisted.Data), "quota")
+}
+
 func TestUpdateBatchTasksPollClassification(t *testing.T) {
 	testCases := []struct {
 		name         string
@@ -1040,4 +1100,47 @@ func TestUpdateBatchTasksPollClassification(t *testing.T) {
 			}
 		})
 	}
+}
+
+// settlingPollingAdaptor implements TaskCompletionSettler.
+type settlingPollingAdaptor struct {
+	scriptedPollingAdaptor
+	quota   int
+	handled bool
+}
+
+func (a *settlingPollingAdaptor) SettleOnComplete(*model.Task, *relaycommon.TaskInfo) (int, *common.QuotaClamp, bool) {
+	return a.quota, nil, a.handled
+}
+
+// TestSettleTaskCompletionSettlerIsFinal: an adaptor-owned zero settlement
+// (e.g. a free group) must not fall back to RecalculateTaskQuotaByTokens,
+// which would charge current ratios for the reported tokens.
+func TestSettleTaskCompletionSettlerIsFinal(t *testing.T) {
+	previousRatios := ratio_setting.ModelRatio2JSONString()
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"test-model":1}`))
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(previousRatios))
+	})
+	truncate(t)
+	const userID, tokenID, channelID = 513, 513, 513
+	const initialQuota, tokenRemain = 10_000, 7_000
+	seedUser(t, userID, initialQuota)
+	seedToken(t, tokenID, userID, "sk-settler", tokenRemain)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 0, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	result := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 5000}
+
+	settled := settleTaskBillingOnComplete(context.Background(), &settlingPollingAdaptor{handled: true}, task, result)
+	assert.True(t, settled)
+	assert.Equal(t, 0, task.Quota)
+	assert.Equal(t, initialQuota, getUserQuota(t, userID))
+	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+
+	// Control: the same task without an authoritative settler is charged by tokens.
+	settled = settleTaskBillingOnComplete(context.Background(), &settlingPollingAdaptor{}, task, result)
+	assert.True(t, settled)
+	assert.Equal(t, 5000, task.Quota)
 }

@@ -290,18 +290,29 @@ export function CommonLogMobileCard<TData>(props: {
       )}
       {showTokens && (
         <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs [overflow-wrap:anywhere]'>
-          <span>
-            {t('Input')}{' '}
-            <span className='text-foreground tabular-nums'>
-              {log.prompt_tokens.toLocaleString()}
+          {other?.is_task === true ? (
+            <span>
+              {t('Upstream billing tokens')}{' '}
+              <span className='text-foreground tabular-nums'>
+                {log.completion_tokens.toLocaleString()}
+              </span>
             </span>
-          </span>
-          <span>
-            {t('Output')}{' '}
-            <span className='text-foreground tabular-nums'>
-              {log.completion_tokens.toLocaleString()}
-            </span>
-          </span>
+          ) : (
+            <>
+              <span>
+                {t('Input')}{' '}
+                <span className='text-foreground tabular-nums'>
+                  {log.prompt_tokens.toLocaleString()}
+                </span>
+              </span>
+              <span>
+                {t('Output')}{' '}
+                <span className='text-foreground tabular-nums'>
+                  {log.completion_tokens.toLocaleString()}
+                </span>
+              </span>
+            </>
+          )}
           {cacheRead > 0 && (
             <span>
               {t('Cache')} ↓ {cacheRead.toLocaleString()}

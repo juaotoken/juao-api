@@ -352,6 +352,8 @@ func migrateDB() error {
 		&QuotaData{},
 		&Task{},
 		&TaskPlugin{},
+		&VolcAsset{},
+		&VolcAssetGroup{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},

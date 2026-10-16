@@ -242,11 +242,15 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
-		// A New API channel may rotate between several gateway tokens, so the
-		// task keeps the key that submitted it and polls with the same identity.
+		// A channel (Gemini, VertexAi, New API, or Volcengine Video) may hold
+		// several keys standing in for distinct upstream accounts, so the
+		// task keeps the key that submitted it and polls with the same
+		// identity — the upstream task only exists under the submitting
+		// account.
 		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
 			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeNewAPI {
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeNewAPI ||
+			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVolcVideo {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
 		}
 		if relayInfo.UpstreamModelName != "" {
@@ -316,6 +320,27 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	}
 
 	return tasks
+}
+
+// ListUserTasksByPlatform pages the caller's tasks of one platform ordered by
+// id. An empty status means no status filter. channel_id is omitted so the
+// user-facing list never reveals which channel served a task.
+func ListUserTasksByPlatform(userID int, platform constant.TaskPlatform, status string, ascending bool, offset, limit int) ([]*Task, int64, error) {
+	query := DB.Model(&Task{}).Where("user_id = ? AND platform = ?", userID, platform)
+	if status != "" {
+		query = query.Where("status = ?", status)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	order := "id desc"
+	if ascending {
+		order = "id asc"
+	}
+	tasks := make([]*Task, 0)
+	err := query.Omit("channel_id").Order(order).Offset(offset).Limit(limit).Find(&tasks).Error
+	return tasks, total, err
 }
 
 func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*Task {

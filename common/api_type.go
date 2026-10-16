@@ -83,9 +83,9 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeNewAPI
 	}
 	if apiType == -1 {
-		// Task plugin channels are served by the task relay and must never
+		// Task-only channels are served by the task relay and must never
 		// fall back to the OpenAI adaptor.
-		if channelType == constant.ChannelTypeTaskPlugin {
+		if channelType == constant.ChannelTypeTaskPlugin || channelType == constant.ChannelTypeVolcVideo {
 			return -1, false
 		}
 		return constant.APITypeOpenAI, false

@@ -432,6 +432,9 @@ type RecordTaskBillingLogParams struct {
 	Group     string
 	Other     *LogOther
 	NodeName  string // 任务发起节点；为空时回退当前节点
+	// 可选：上游计费 token 与任务耗时（秒），仅用于日志展示
+	CompletionTokens int
+	UseTimeSeconds   int
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
@@ -459,6 +462,9 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 		TokenId:   params.TokenId,
 		Group:     params.Group,
 		Other:     params.Other.JSONString(),
+
+		CompletionTokens: params.CompletionTokens,
+		UseTime:          params.UseTimeSeconds,
 	}
 	err := createLog(log)
 	if err != nil {

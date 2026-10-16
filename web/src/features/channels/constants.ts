@@ -33,6 +33,10 @@ export const CHANNEL_TYPE_VLLM = 62
 
 export const CHANNEL_TYPE_SGLANG = 63
 
+// Intentionally numbered far above the contiguous channel types; mirrors
+// constant.ChannelTypeVolcVideo in the backend (see constant/channel.go).
+export const CHANNEL_TYPE_VOLC_VIDEO = 500
+
 export const CHANNEL_TYPES = {
   0: 'Unknown',
   1: 'OpenAI',
@@ -94,6 +98,7 @@ export const CHANNEL_TYPES = {
   61: 'Task Plugin',
   62: 'vLLM',
   63: 'SGLang',
+  500: 'Volcengine Video',
 } as const
 
 export type ChannelProviderPresentation = {
@@ -177,6 +182,10 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
   },
   62: { descriptionKey: 'Connect to self-hosted models served by vLLM' },
   63: { descriptionKey: 'Connect to self-hosted models served by SGLang' },
+  500: {
+    descriptionKey:
+      'Connect to Volcengine Seedance video generation and asset management through a compatible gateway',
+  },
 } satisfies Record<
   Exclude<keyof typeof CHANNEL_TYPES, 0 | typeof CHANNEL_TYPE_TASK_PLUGIN>,
   ChannelProviderPresentation
@@ -185,7 +194,7 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
   1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
   4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
-  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
+  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 500, 56,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -567,6 +576,7 @@ export const TYPE_TO_KEY_PROMPT: Record<number, string> = {
   60: 'Enter API key for this channel',
   62: 'vLLM API key, or EMPTY if authentication is disabled',
   63: 'SGLang API key, or EMPTY if authentication is disabled',
+  500: 'Enter API key for this channel',
 }
 
 export const CHANNEL_TYPE_WARNINGS: Record<number, string> = {

@@ -76,17 +76,25 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo, task *model
 	} else {
 		setTaskImageCount(other, info.PriceData.OtherRatios()["image_count"])
 	}
+	// Adaptor-reported display data: estimated upstream billing tokens and
+	// the requested video parameters.
+	var logUsage relaycommon.TaskLogUsage
+	if info.TaskRelayInfo != nil && info.TaskRelayInfo.LogUsage != nil {
+		logUsage = *info.TaskRelayInfo.LogUsage
+	}
+	other.MergePublic(logUsage.Other)
 	appendTaskLogInfo(task, other)
 	attachQuotaSaturation(c, info, other)
 	model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
-		ChannelId: info.ChannelId,
-		ModelName: info.OriginModelName,
-		TokenName: tokenName,
-		Quota:     info.PriceData.Quota,
-		Content:   logContent,
-		TokenId:   info.TokenId,
-		Group:     info.UsingGroup,
-		Other:     other,
+		ChannelId:        info.ChannelId,
+		CompletionTokens: logUsage.CompletionTokens,
+		ModelName:        info.OriginModelName,
+		TokenName:        tokenName,
+		Quota:            info.PriceData.Quota,
+		Content:          logContent,
+		TokenId:          info.TokenId,
+		Group:            info.UsingGroup,
+		Other:            other,
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
@@ -307,6 +315,13 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) bool 
 // reason 用于日志记录（例如 "token重算" 或 "adaptor调整"）。
 // clamps 可选：若计算 actualQuota 时发生额度饱和，将其记入日志 admin_info（仅管理员可见）。
 func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int, reason string, clamps ...*common.QuotaClamp) {
+	RecalculateTaskQuotaWithLog(ctx, task, actualQuota, reason, nil, clamps...)
+}
+
+// RecalculateTaskQuotaWithLog is RecalculateTaskQuota with optional
+// adaptor-reported log usage (upstream billing tokens, generation time and
+// display metadata) written onto the settlement log.
+func RecalculateTaskQuotaWithLog(ctx context.Context, task *model.Task, actualQuota int, reason string, logUsage *relaycommon.TaskLogUsage, clamps ...*common.QuotaClamp) {
 	if actualQuota < 0 {
 		return
 	}
@@ -361,7 +376,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	for _, clamp := range clamps {
 		attachQuotaSaturationToOther(other, clamp)
 	}
-	model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
+	params := model.RecordTaskBillingLogParams{
 		UserId:    task.UserId,
 		LogType:   logType,
 		Content:   reason,
@@ -372,7 +387,13 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		Group:     task.Group,
 		Other:     other,
 		NodeName:  task.PrivateData.NodeName,
-	})
+	}
+	if logUsage != nil {
+		other.MergePublic(logUsage.Other)
+		params.CompletionTokens = logUsage.CompletionTokens
+		params.UseTimeSeconds = logUsage.UseTimeSeconds
+	}
+	model.RecordTaskBillingLog(params)
 }
 
 // RecalculateTaskQuotaByTokens 根据实际 token 消耗重新计费（异步差额结算）。

@@ -40,6 +40,25 @@ type BatchTaskPollingAdaptor interface {
 	ParseBatchResult(tasks []*model.Task, resp *http.Response, body []byte) (map[string]*BatchTaskResult, error)
 }
 
+// TaskDataSanitizer lets an adaptor reduce the stored poll snapshot to the
+// fields its users may see.
+type TaskDataSanitizer interface {
+	SanitizeTaskData(body []byte) []byte
+}
+
+// TaskCompletionSettler lets an adaptor own completion settlement outright:
+// handled=true means quota (possibly zero) is final and no host fallback runs.
+type TaskCompletionSettler interface {
+	SettleOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) (quota int, clamp *common.QuotaClamp, handled bool)
+}
+
+// TaskSettlementLogProvider lets an adaptor attach upstream billing tokens,
+// the generation time, and display-only metadata to its completion
+// settlement log. It never changes the settled quota.
+type TaskSettlementLogProvider interface {
+	TaskSettlementLog(task *model.Task, taskResult *relaycommon.TaskInfo) relaycommon.TaskLogUsage
+}
+
 const (
 	pollClassOK           = "ok"
 	pollClassOtherClient  = "other_client"
@@ -518,8 +537,21 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 
 	taskResult := &relaycommon.TaskInfo{}
 	// try parse as New API response format
+	//
+	// Volcengine Video (channel type 500) upstream answers in the very same
+	// {"code":"success","data":{...}} envelope shape that new-api's own
+	// TaskResponse[model.Task] decodes, so this branch would match it too —
+	// but model.Task doesn't decode the upstream's result_url (it lives in
+	// PrivateData) or total_tokens, so the result URL and billing tokens
+	// would be silently dropped. Route this channel type straight to the
+	// adaptor instead.
 	var responseItems taskdto.TaskResponse[model.Task]
-	if err = common.Unmarshal(responseBody, &responseItems); err == nil && responseItems.IsSuccess() {
+	isNewAPIResponse := ch.Type != constant.ChannelTypeVolcVideo
+	if isNewAPIResponse {
+		err = common.Unmarshal(responseBody, &responseItems)
+		isNewAPIResponse = err == nil && responseItems.IsSuccess()
+	}
+	if isNewAPIResponse {
 		logger.LogDebug(ctx, "updateVideoSingleTask parsed as new api response format: %+v", responseItems)
 		t := responseItems.Data
 		taskResult.TaskID = t.TaskID
@@ -542,7 +574,16 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPollingAdaptor, ch *
 		return recordPollFailure(ctx, adaptor, task, snap.Status, pollClassUnrecognized, resp.StatusCode, unrecognizedPollDetail(taskResult.Reason, responseBody))
 	}
 
+	// Prefer an adaptor-provided sanitizer over the generic redaction below:
+	// some upstreams (e.g. Volcengine Video's reseller gateway) embed their
+	// own account/billing fields in the poll body, which redactVideoResponseBody
+	// does not know to strip.
 	task.Data = redactVideoResponseBody(responseBody)
+	if sanitizer, ok := adaptor.(TaskDataSanitizer); ok {
+		if sanitized := sanitizer.SanitizeTaskData(responseBody); sanitized != nil {
+			task.Data = sanitized
+		}
+	}
 	if len(taskResult.PluginState) > 0 {
 		task.PrivateData.PluginState = taskResult.PluginState
 	}
@@ -667,10 +708,16 @@ func truncateBase64(s string) string {
 
 // settleTaskBillingOnComplete 任务完成时的统一计费调整。
 // 返回 true 表示用量结算路径已接管最终计费；失败任务仅在返回 false 时补做全额退款。
-// 优先级：1. tiered snapshot → 2. adaptor 调整 → 3. token 重算。
+// 优先级：1. tiered snapshot → 2. 按次计费 → 3. adaptor 接管结算(TaskCompletionSettler)
+// → 4. adaptor 调整 → 5. token 重算。
 //
 // 表达式求值失败会保留预扣额度，因此也视为已接管，避免错误全退。
 func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor, task *model.Task, taskResult *relaycommon.TaskInfo) bool {
+	var logUsage *relaycommon.TaskLogUsage
+	if provider, ok := adaptor.(TaskSettlementLogProvider); ok && task.Status == model.TaskStatusSuccess {
+		usage := provider.TaskSettlementLog(task, taskResult)
+		logUsage = &usage
+	}
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.TieredSnapshot != nil {
 		// 用量表达式结算只适用于成功任务；失败任务由调用方全额退款。
 		if task.Status == model.TaskStatusFailure {
@@ -686,13 +733,20 @@ func settleTaskBillingOnComplete(ctx context.Context, adaptor TaskPollingAdaptor
 		}
 		bc.TieredSnapshot.UsageFacts = usageFacts
 		bc.TieredSnapshot.EstimatedTier = result.MatchedTier
-		RecalculateTaskQuota(ctx, task, result.ActualQuotaAfterGroup, "任务用量表达式结算", result.Clamp)
+		RecalculateTaskQuotaWithLog(ctx, task, result.ActualQuotaAfterGroup, "任务用量表达式结算", logUsage, result.Clamp)
 		return true
 	}
 	// 按次计费的成功任务保持预扣；失败任务由调用方全额退款。
 	if bc := task.PrivateData.BillingContext; bc != nil && bc.PerCallBilling {
 		logger.LogInfo(ctx, fmt.Sprintf("任务 %s 按次计费，跳过差额结算", task.TaskID))
 		return false
+	}
+	// adaptor 完全接管结算（额度可为 0，例如免费分组），不再回落 token 重算。
+	if settler, ok := adaptor.(TaskCompletionSettler); ok && task.Status == model.TaskStatusSuccess {
+		if quota, clamp, handled := settler.SettleOnComplete(task, taskResult); handled {
+			RecalculateTaskQuotaWithLog(ctx, task, quota, "adaptor token settlement", logUsage, clamp)
+			return true
+		}
 	}
 	// 优先让 adaptor 决定最终额度。
 	if actualQuota := adaptor.AdjustBillingOnComplete(task, taskResult); actualQuota > 0 {

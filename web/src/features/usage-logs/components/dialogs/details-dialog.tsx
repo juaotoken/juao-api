@@ -50,6 +50,7 @@ import {
   Info,
   LogIn,
   FileJson,
+  Clapperboard,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -388,6 +389,25 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 
   const rows: Array<{ label: string; value: string }> = []
 
+  // A task's token count is the upstream billing total, not an input/output
+  // pair; labelling it "Input Tokens 0" would read as a missing value.
+  if (other.is_task === true) {
+    if (completionTokens > 0) {
+      rows.push({
+        label: t('Upstream billing tokens'),
+        value: completionTokens.toLocaleString(),
+      })
+    }
+    if (rows.length === 0) return null
+    return (
+      <DetailSection label={t('Token Breakdown')}>
+        {rows.map((row) => (
+          <DetailRow key={row.label} label={row.label} value={row.value} mono />
+        ))}
+      </DetailSection>
+    )
+  }
+
   rows.push({ label: t('Input Tokens'), value: promptTokens.toLocaleString() })
   rows.push({
     label: t('Output Tokens'),
@@ -488,8 +508,13 @@ export function DetailsDialog(props: DetailsDialogProps) {
   const isTopup = props.log.type === 1
   const isManage = props.log.type === 3
   const isSubscription = other?.billing_source === 'subscription'
+  // A task's settlement log is written as a refund when the pre-charge
+  // exceeded the measured usage, but it carries the same pricing data as a
+  // consume log and must show the same breakdown.
+  const showsSettlementBilling =
+    isConsume || (isRefund && other?.is_task === true)
   const isTieredBilling =
-    isConsume &&
+    showsSettlementBilling &&
     !isViolation &&
     other?.billing_mode === 'tiered_expr' &&
     !!other?.expr_b64
@@ -1220,13 +1245,59 @@ export function DetailsDialog(props: DetailsDialogProps) {
             </DetailSection>
           )}
 
+        {/* Video task parameters reported by the serving adaptor */}
+        {other?.is_task === true && hasVideoTaskDetails(other) && (
+          <DetailSection
+            icon={<Clapperboard className='size-3.5' aria-hidden='true' />}
+            iconTone='info'
+            label={t('Video Parameters')}
+          >
+            {other.video_requested_seconds != null && (
+              <DetailRow
+                label={t('Requested Duration')}
+                value={`${other.video_requested_seconds} ${t('seconds')}`}
+                mono
+              />
+            )}
+            {other.video_seconds != null && (
+              <DetailRow
+                label={t('Video Duration')}
+                value={`${other.video_seconds} ${t('seconds')}`}
+                mono
+              />
+            )}
+            {other.video_resolution && (
+              <DetailRow
+                label={t('Resolution')}
+                value={other.video_resolution}
+                mono
+              />
+            )}
+            {other.video_ratio && (
+              <DetailRow
+                label={t('Aspect Ratio')}
+                value={other.video_ratio}
+                mono
+              />
+            )}
+            {other.video_generation_seconds != null && (
+              <DetailRow
+                label={t('Generation Time')}
+                value={formatUseTime(other.video_generation_seconds)}
+                mono
+              />
+            )}
+          </DetailSection>
+        )}
+
         {/* Token breakdown (for consume/error types with token data) */}
         {isDisplayableType(props.log.type) && other && (
           <TokenBreakdown log={props.log} other={other} />
         )}
 
-        {/* Billing breakdown (consume type) */}
-        {isConsume && other && !isViolation && (
+        {/* Billing breakdown (consume type, and task refunds which carry the
+            same settlement pricing) */}
+        {(isConsume || isRefund) && other && !isViolation && (
           <BillingBreakdown
             log={props.log}
             other={other}
@@ -1430,4 +1501,16 @@ export function DetailsDialog(props: DetailsDialogProps) {
 
 function isDisplayableType(type: number): boolean {
   return [0, 2, 5, 6].includes(type)
+}
+
+// hasVideoTaskDetails reports whether a task log carries any video parameter
+// the details dialog can show, so the section never renders empty.
+function hasVideoTaskDetails(other: LogOtherData): boolean {
+  return (
+    other.video_requested_seconds != null ||
+    other.video_seconds != null ||
+    Boolean(other.video_resolution) ||
+    Boolean(other.video_ratio) ||
+    other.video_generation_seconds != null
+  )
 }

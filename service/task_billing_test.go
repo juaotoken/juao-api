@@ -1801,3 +1801,188 @@ func TestSettle_TokenRecalcFallsBackToCompletionTokens(t *testing.T) {
 		})
 	}
 }
+
+// ===========================================================================
+// volcvideo-style settlement: tiered expression vs. adaptor token settlement
+// ===========================================================================
+
+// settlingAdaptor implements every settlement hook the polling loop knows, so
+// a test can prove which one owns a task's final quota.
+type settlingAdaptor struct {
+	settledQuota int
+	settleCalled bool
+	logUsage     relaycommon.TaskLogUsage
+}
+
+func (m *settlingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+func (m *settlingAdaptor) FetchTask(string, string, *model.Task, string) (*http.Response, error) {
+	return nil, nil
+}
+func (m *settlingAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
+func (m *settlingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return m.settledQuota
+}
+func (m *settlingAdaptor) SettleOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) (int, *common.QuotaClamp, bool) {
+	m.settleCalled = true
+	return m.settledQuota, nil, true
+}
+func (m *settlingAdaptor) TaskSettlementLog(_ *model.Task, _ *relaycommon.TaskInfo) relaycommon.TaskLogUsage {
+	return m.logUsage
+}
+
+func TestSettle_TieredTakesPrecedenceOverAdaptorSettler(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID = 50
+	const initialQuota, preConsumed = 10_000, 100
+	seedUser(t, userID, initialQuota)
+
+	expression := `tier("base", u("tokens"))`
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	task.PrivateData.BillingContext.TieredSnapshot = &billingexpr.BillingSnapshot{
+		ExprString:       expression,
+		ExprHash:         billingexpr.ExprHashString(expression),
+		GroupRatio:       1,
+		QuotaPerUnit:     1,
+		ExprVersion:      1,
+		TaskUsageBilling: true,
+		UsageFacts:       map[string]any{"tokens": float64(1000)},
+		EstimatedTier:    "base",
+	}
+
+	adaptor := &settlingAdaptor{
+		settledQuota: 999_999,
+		logUsage: relaycommon.TaskLogUsage{
+			CompletionTokens: 1500,
+			UseTimeSeconds:   42,
+			Other: map[string]any{
+				"is_task":                  true,
+				"video_generation_seconds": 42,
+				"video_seconds":            5,
+				"video_resolution":         "720p",
+				"video_ratio":              "16:9",
+				"video_requested_seconds":  5,
+			},
+		},
+	}
+
+	settled := settleTaskBillingOnComplete(ctx, adaptor, task, &relaycommon.TaskInfo{
+		Status:      model.TaskStatusSuccess,
+		TotalTokens: 1500,
+		UsageFacts:  map[string]any{"tokens": float64(1500)},
+	})
+
+	assert.True(t, settled)
+	assert.False(t, adaptor.settleCalled, "a frozen usage expression owns settlement; the adaptor settler must not also run")
+	assert.Equal(t, 1500, task.Quota)
+	assert.Equal(t, initialQuota+(preConsumed-1500), getUserQuota(t, userID))
+	assert.Equal(t, map[string]any{"tokens": float64(1500)}, task.PrivateData.BillingContext.TieredSnapshot.UsageFacts)
+
+	assert.Equal(t, int64(1), countLogs(t), "a task must settle exactly once")
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Equal(t, 1400, log.Quota)
+	assert.Equal(t, 1500, log.CompletionTokens)
+	assert.Equal(t, 42, log.UseTime)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "tiered_expr", other["billing_mode"])
+	assert.Equal(t, "base", other["matched_tier"])
+	assert.Equal(t, "720p", other["video_resolution"])
+	assert.Equal(t, "16:9", other["video_ratio"])
+	assert.Equal(t, float64(5), other["video_seconds"])
+	assert.Equal(t, float64(42), other["video_generation_seconds"])
+	assert.Equal(t, true, other["is_task"])
+}
+
+func TestSettle_RatioModeSettlementLogCarriesUpstreamTokens(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID = 51
+	const initialQuota, preConsumed = 10_000, 500
+	seedUser(t, userID, initialQuota)
+
+	task := makeTask(userID, 0, preConsumed, 0, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusSuccess
+	task.PrivateData.BillingContext.ModelRatio = 2
+	task.PrivateData.BillingContext.GroupRatio = 1
+
+	adaptor := &settlingAdaptor{
+		settledQuota: 800,
+		logUsage: relaycommon.TaskLogUsage{
+			CompletionTokens: 800,
+			UseTimeSeconds:   30,
+			Other: map[string]any{
+				"is_task":                  true,
+				"video_generation_seconds": 30,
+				"video_seconds":            5,
+				"video_resolution":         "480p",
+			},
+		},
+	}
+
+	settled := settleTaskBillingOnComplete(ctx, adaptor, task, &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 800})
+
+	assert.True(t, settled)
+	assert.True(t, adaptor.settleCalled)
+	assert.Equal(t, 800, task.Quota)
+	assert.Equal(t, initialQuota+(preConsumed-800), getUserQuota(t, userID))
+
+	log := getLastLog(t)
+	require.NotNil(t, log)
+	assert.Equal(t, model.LogTypeConsume, log.Type)
+	assert.Equal(t, 300, log.Quota)
+	assert.Equal(t, 800, log.CompletionTokens)
+	assert.Equal(t, 30, log.UseTime)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, "480p", other["video_resolution"])
+	assert.Equal(t, float64(5), other["video_seconds"])
+}
+
+func TestLogTaskConsumptionEmitsAdaptorLogUsage(t *testing.T) {
+	truncate(t)
+	const userID, channelID = 52, 52
+	seedUser(t, userID, 10_000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 100, 0, BillingSourceWallet, 0)
+	info := &relaycommon.RelayInfo{
+		UserId:          userID,
+		OriginModelName: "doubao-seedance-2-0",
+		UsingGroup:      "default",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			Action: "GENERATE",
+			LogUsage: &relaycommon.TaskLogUsage{
+				CompletionTokens: 50_638,
+				Other: map[string]any{
+					"video_requested_seconds": 5,
+					"video_resolution":        "720p",
+					"video_ratio":             "16:9",
+				},
+			},
+		},
+		PriceData: types.PriceData{
+			ModelPrice:     0.02,
+			Quota:          100,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+
+	log := callLogTaskConsumption(t, info, task)
+
+	assert.Equal(t, 50_638, log.CompletionTokens)
+	var other map[string]any
+	require.NoError(t, common.UnmarshalJsonStr(log.Other, &other))
+	assert.Equal(t, true, other["is_task"])
+	assert.Equal(t, float64(5), other["video_requested_seconds"])
+	assert.Equal(t, "720p", other["video_resolution"])
+	assert.Equal(t, "16:9", other["video_ratio"])
+}

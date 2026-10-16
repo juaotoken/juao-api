@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
 	"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
+	"github.com/QuantumNous/new-api/relay/channel/task/volcvideo"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -31,6 +32,17 @@ import (
 var openAIModels []dto.OpenAIModels
 var openAIModelsMap map[string]dto.OpenAIModels
 var channelId2Models map[int][]string
+
+// enumeratedChannelTypes lists every channel type that model listing must
+// visit: the contiguous community range 1..ChannelTypeDummy plus task-only
+// channel types numbered far outside that range (see ChannelTypeVolcVideo).
+func enumeratedChannelTypes() []int {
+	types := make([]int, 0, constant.ChannelTypeDummy+1)
+	for i := 1; i <= constant.ChannelTypeDummy; i++ {
+		types = append(types, i)
+	}
+	return append(types, constant.ChannelTypeVolcVideo)
+}
 
 func init() {
 	// https://platform.openai.com/docs/models/model-endpoint-compatibility
@@ -95,11 +107,16 @@ func init() {
 		openAIModelsMap[aiModel.Id] = aiModel
 	}
 	channelId2Models = make(map[int][]string)
-	for i := 1; i <= constant.ChannelTypeDummy; i++ {
+	for _, i := range enumeratedChannelTypes() {
 		apiType, success := common.ChannelType2APIType(i)
 		if !success || apiType == constant.APITypeAIProxyLibrary {
 			if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(i); ok {
 				channelId2Models[i] = append([]string(nil), plugin.Meta.Models...)
+			} else if i == constant.ChannelTypeVolcVideo {
+				// Channel type 500 (Volcengine Video) has no JS plugin and no
+				// ChannelType2APIType mapping; its model list lives only on
+				// the Go-native task adaptor.
+				channelId2Models[i] = append([]string(nil), volcvideo.ModelList...)
 			}
 			continue
 		}
@@ -327,7 +344,7 @@ func DashboardListModels(c *gin.Context) {
 	for channelType, models := range channelId2Models {
 		modelsByChannel[channelType] = append([]string(nil), models...)
 	}
-	for channelType := 1; channelType <= constant.ChannelTypeDummy; channelType++ {
+	for _, channelType := range enumeratedChannelTypes() {
 		if plugin, ok := jsplugin.DefaultRegistry.GetByChannelType(channelType); ok {
 			modelsByChannel[channelType] = append([]string(nil), plugin.Meta.Models...)
 		}
