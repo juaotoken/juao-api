@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/taskusage"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -277,6 +278,8 @@ func GetModelPricingSnapshot(names []string) (*ModelPricingSnapshot, error) {
 			if plugin, ok := generation.Get(target.PluginKey); ok {
 				entry.UsageSchema, _ = plugin.Meta.UsageForModel(target.Declared)
 			}
+		} else if schema, _, native := taskusage.ForModel(name); native {
+			entry.UsageSchema = schema
 		}
 		plugins := generation.PluginsByModel(name)
 		configuredVariants, _ := configured[billing_setting.PluginBillingExprOption].(map[string]any)
@@ -432,6 +435,10 @@ func validateModelPricing(name string, values, previous PricingValues) error {
 				} else {
 					err = billing_setting.SmokeTestExpr(expression)
 				}
+			} else if schema, _, native := taskusage.ForModel(name); native {
+				// Go-native task adaptors declare their usage schema in
+				// pkg/taskusage instead of a JavaScript plugin.
+				err = billing_setting.SmokeTestTaskExpr(expression, schema)
 			} else if previous[key] != expression || len(billingexpr.UsedUsageKeys(expression)) == 0 {
 				err = billing_setting.SmokeTestExpr(expression)
 			}

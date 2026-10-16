@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/taskusage"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
 	"github.com/QuantumNous/new-api/setting/config"
@@ -296,4 +297,77 @@ func TestPricingSharedPluginVariantsUseEachSchemaAndExpression(t *testing.T) {
 	encoded, err := common.Marshal(single)
 	require.NoError(t, err)
 	assert.Contains(t, string(encoded), "billing_plugin_variants")
+}
+
+// TestPricingNativeTaskUsageSchema covers Go-native task adaptors that declare
+// their usage schema in pkg/taskusage rather than through a JavaScript plugin:
+// the pricing API, the pricing snapshot and save validation must all see it.
+func TestPricingNativeTaskUsageSchema(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	const nativeModel = "native-usage-model"
+	taskusage.Register([]string{nativeModel}, map[string]jsplugin.UsageFieldSchema{
+		"seconds": {Type: "number", Unit: "second", Description: jsplugin.LocalizedText{"en": "Duration", "zh": "时长"}},
+		"action":  {Enum: []string{"video"}, EnumLabels: map[string]jsplugin.LocalizedText{"video": {"en": "Generate video", "zh": "生成视频"}}},
+	}, []jsplugin.UsageExample{{Label: "5s", Facts: map[string]any{"seconds": 5, "action": "video"}}})
+	t.Cleanup(func() { taskusage.Unregister(nativeModel) })
+
+	insertPricingEndpointChannel(t, 950, constant.ChannelTypeVolcVideo, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 950, nativeModel)
+	insertPricingEndpointAbility(t, 950, "plain-model")
+	InitChannelCache()
+	InvalidatePricingCache()
+
+	pricing := pricingByModel(GetPricing())
+	require.Contains(t, pricing, nativeModel)
+	require.Contains(t, pricing, "plain-model")
+	assert.Equal(t, "second", pricing[nativeModel].BillingUsageSchema["seconds"].Unit)
+	assert.Equal(t, "时长", pricing[nativeModel].BillingUsageSchema["seconds"].Description["zh"])
+	assert.Equal(t, "生成视频", pricing[nativeModel].BillingUsageSchema["action"].EnumLabels["video"]["zh"])
+	require.Len(t, pricing[nativeModel].BillingUsageExamples, 1)
+	assert.Nil(t, pricing["plain-model"].BillingUsageSchema, "an unregistered model must not inherit another model's schema")
+
+	snapshot, err := GetModelPricingSnapshot([]string{nativeModel, "plain-model"})
+	require.NoError(t, err)
+	entries := make(map[string]ModelPricingEntry, len(snapshot.Entries))
+	for _, entry := range snapshot.Entries {
+		entries[entry.ModelName] = entry
+	}
+	assert.Equal(t, "second", entries[nativeModel].UsageSchema["seconds"].Unit)
+	assert.Nil(t, entries["plain-model"].UsageSchema)
+
+	require.NoError(t, ValidateModelPricing(nativeModel, PricingValues{
+		"billing_setting.billing_expr": `tier("base", u("seconds") * 100)`,
+		"billing_setting.billing_mode": billing_setting.BillingModeTieredExpr,
+	}))
+	require.ErrorContains(t, ValidateModelPricing(nativeModel, PricingValues{
+		"billing_setting.billing_expr": `tier("base", u("missing") * 100)`,
+		"billing_setting.billing_mode": billing_setting.BillingModeTieredExpr,
+	}), "not declared")
+	// The schema is keyed by model name, so a sibling model still uses the
+	// generic smoke test and may not reference a usage key at all.
+	require.ErrorContains(t, ValidateModelPricing("plain-model", PricingValues{
+		"billing_setting.billing_expr": `tier("base", u("seconds") * 100)`,
+		"billing_setting.billing_mode": billing_setting.BillingModeTieredExpr,
+	}), "no task plugin usage schema")
+}
+
+func TestNativeTaskUsageSchemaDoesNotAffectConversionPreview(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	require.NoError(t, DB.AutoMigrate(&Option{}))
+	const nativeModel = "native-conversion-model"
+	taskusage.Register([]string{nativeModel}, map[string]jsplugin.UsageFieldSchema{
+		"seconds": {Type: "number", Unit: "second"},
+	}, nil)
+	t.Cleanup(func() { taskusage.Unregister(nativeModel) })
+
+	insertPricingEndpointChannel(t, 951, constant.ChannelTypeVolcVideo, dto.ChannelOtherSettings{})
+	insertPricingEndpointAbility(t, 951, nativeModel)
+	InitChannelCache()
+	InvalidatePricingCache()
+
+	conversion, err := PreviewModelPricingConversion(nativeModel, PricingValues{"ModelRatio": 1.0})
+	require.NoError(t, err)
+	require.NotNil(t, conversion)
+	assert.Contains(t, conversion.UnsupportedReason, "task usage schema")
 }
