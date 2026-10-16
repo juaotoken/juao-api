@@ -38,6 +38,7 @@ type pollData struct {
 	ResultURL   string     `json:"result_url"`
 	FailReason  string     `json:"fail_reason"`
 	TotalTokens tokenCount `json:"total_tokens"`
+	Resolution  string     `json:"resolution"`
 }
 
 // tokenCount decodes the upstream total_tokens tolerantly: a JSON number

@@ -30,8 +30,12 @@ import (
 )
 
 var (
-	_ channel.TaskAdaptor          = (*Adaptor)(nil)
-	_ channel.OpenAIVideoConverter = (*Adaptor)(nil)
+	_ channel.TaskAdaptor                     = (*Adaptor)(nil)
+	_ channel.OpenAIVideoConverter            = (*Adaptor)(nil)
+	_ channel.TaskUsageFactsProvider          = (*Adaptor)(nil)
+	_ channel.TaskValidatedUsageFactsProvider = (*Adaptor)(nil)
+	_ service.TaskCompletionSettler           = (*Adaptor)(nil)
+	_ service.TaskSettlementLogProvider       = (*Adaptor)(nil)
 )
 
 // maxSubmitResponseBytes bounds how much of the upstream submit response this
@@ -168,12 +172,13 @@ func checkVolcAssetReferences(body map[string]any, info *relaycommon.RelayInfo) 
 // groupRatio, matching the settlement formula in AdjustBillingOnComplete.
 // Fixed-price models (UsePrice == true) skip token estimation entirely.
 func (a *Adaptor) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
-	if info.PriceData.UsePrice {
-		return nil
-	}
 	resolution, _ := a.requestBody["resolution"].(string)
 	seconds := requestSeconds(a.requestBody)
 	tokens := estimateTokens(seconds, resolution)
+	a.recordSubmitLogUsage(info, tokens)
+	if info.PriceData.UsePrice {
+		return nil
+	}
 	return map[string]float64{"token_estimate": tokens * 2 / common.QuotaPerUnit}
 }
 
@@ -198,7 +203,9 @@ func (a *Adaptor) SettleOnComplete(task *model.Task, taskResult *relaycommon.Tas
 		return 0, nil, false
 	}
 	billingContext := task.PrivateData.BillingContext
-	if billingContext == nil || billingContext.PerCallBilling {
+	// Usage-expression (tiered) tasks settle through the host's frozen
+	// expression snapshot; claiming them here would settle twice.
+	if billingContext == nil || billingContext.PerCallBilling || billingContext.TieredSnapshot != nil {
 		return 0, nil, false
 	}
 	tokens := taskResult.TotalTokens
@@ -377,6 +384,7 @@ func (a *Adaptor) ParseTaskResult(task *model.Task, resp *http.Response, body []
 		info.Progress = "100%"
 		info.Url = envelope.Data.ResultURL
 		info.TotalTokens = envelope.Data.TotalTokens.Int()
+		info.UsageFacts = completionUsageFacts(task, envelope.Data)
 	case "FAILURE":
 		info.Status = string(model.TaskStatusFailure)
 		reason := envelope.Data.FailReason

@@ -6,12 +6,16 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/pkg/taskusage"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/gin-gonic/gin"
@@ -578,4 +582,330 @@ func TestValidateRequestAcceptsOpenAIVideoMultipart(t *testing.T) {
 	assert.Equal(t, "480p", a.requestBody["resolution"])
 	assert.Equal(t, float64(5), a.requestBody["duration"])
 	assert.Equal(t, []any{map[string]any{"type": "text", "text": "太空大战"}}, a.requestBody["content"])
+}
+
+// --- usage facts (tiered billing) -------------------------------------------
+
+func TestExtractUsageFactsValidated(t *testing.T) {
+	cases := []struct {
+		name          string
+		originModel   string
+		upstreamModel string
+		channelMeta   bool
+		body          map[string]any
+		wantRes       string
+		wantVideo     string
+		wantError     string
+	}{
+		{
+			name:        "explicit tier passes through",
+			originModel: "doubao-seedance-2-0",
+			body:        map[string]any{"resolution": "720p", "duration": float64(5)},
+			wantRes:     "720p",
+			wantVideo:   "none",
+		},
+		{
+			name:        "tier name is lowercased",
+			originModel: "doubao-seedance-2-0",
+			body:        map[string]any{"resolution": "720P"},
+			wantRes:     "720p",
+			wantVideo:   "none",
+		},
+		{
+			name:        "WxH size maps to a tier",
+			originModel: "doubao-seedance-2-0",
+			body:        map[string]any{"resolution": "1920x1080"},
+			wantRes:     "1080p",
+			wantVideo:   "none",
+		},
+		{
+			name:        "absent resolution reserves the highest tier up to 1080p",
+			originModel: "doubao-seedance-2-0",
+			body:        map[string]any{"duration": float64(5)},
+			wantRes:     "1080p",
+			wantVideo:   "none",
+		},
+		{
+			name:        "absent resolution reserves the model's highest tier",
+			originModel: "doubao-seedance-2-0-fast",
+			body:        map[string]any{"duration": float64(5)},
+			wantRes:     "720p",
+			wantVideo:   "none",
+		},
+		{
+			name:        "tier the model does not offer is rejected",
+			originModel: "doubao-seedance-2-0-fast",
+			body:        map[string]any{"resolution": "1080p"},
+			wantError:   "doubao-seedance-2-0-fast resolution must be one of 480p, 720p",
+		},
+		{
+			name:          "upstream model name decides the profile",
+			originModel:   "seedance-alias",
+			upstreamModel: "doubao-seedance-2-0-mini",
+			channelMeta:   true,
+			body:          map[string]any{"resolution": "720p"},
+			wantRes:       "720p",
+			wantVideo:     "none",
+		},
+		{
+			name:          "upstream model name narrows an alias to a real tier",
+			originModel:   "seedance-alias",
+			upstreamModel: "doubao-seedance-2-0-mini",
+			channelMeta:   true,
+			body:          map[string]any{"resolution": "4k"},
+			wantError:     "doubao-seedance-2-0-mini resolution must be one of 480p, 720p",
+		},
+		{
+			name:        "reference video is detected by type",
+			originModel: "doubao-seedance-2-0",
+			body: map[string]any{"resolution": "720p", "content": []any{
+				map[string]any{"type": "video_url", "video_url": map[string]any{"url": "https://x/in.mp4"}},
+			}},
+			wantRes:   "720p",
+			wantVideo: "video",
+		},
+		{
+			name:        "reference video is detected without an explicit type",
+			originModel: "doubao-seedance-2-0",
+			body: map[string]any{"resolution": "720p", "content": []any{
+				map[string]any{"text": "a cat"},
+				map[string]any{"video_url": map[string]any{"url": "https://x/in.mp4"}},
+			}},
+			wantRes:   "720p",
+			wantVideo: "video",
+		},
+		{
+			name:        "an unregistered model accepts every tier",
+			originModel: "some-vendor-endpoint-id",
+			body:        map[string]any{"resolution": "4k"},
+			wantRes:     "4k",
+			wantVideo:   "none",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			a := &Adaptor{requestBody: tc.body}
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tc.originModel,
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{Action: "GENERATE"},
+			}
+			if tc.channelMeta {
+				info.ChannelMeta = &relaycommon.ChannelMeta{UpstreamModelName: tc.upstreamModel}
+			}
+
+			facts, err := a.ExtractUsageFactsValidated(newTestContext(t, tc.body), info)
+
+			if tc.wantError != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tc.wantError)
+				assert.Nil(t, facts)
+				assert.Nil(t, info.TaskRelayInfo.LogUsage, "a rejected request must not publish a submit log")
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantRes, facts["resolution"])
+			assert.Equal(t, tc.wantVideo, facts["video_input"])
+			tokens, ok := facts["tokens"].(float64)
+			require.True(t, ok)
+			assert.Greater(t, tokens, float64(0))
+			require.NotNil(t, info.TaskRelayInfo.LogUsage)
+			assert.Equal(t, common.QuotaRound(tokens), info.TaskRelayInfo.LogUsage.CompletionTokens)
+			assert.Equal(t, requestSeconds(tc.body), info.TaskRelayInfo.LogUsage.Other["video_requested_seconds"])
+		})
+	}
+}
+
+func TestSubmitLogUsageCarriesRequestedVideoParameters(t *testing.T) {
+	body := map[string]any{"resolution": "1080P", "ratio": "16:9", "duration": float64(8)}
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "doubao-seedance-2-0",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{Action: "GENERATE"},
+	}
+	_, err := (&Adaptor{requestBody: body}).ExtractUsageFactsValidated(newTestContext(t, body), info)
+	require.NoError(t, err)
+	require.NotNil(t, info.TaskRelayInfo.LogUsage)
+	assert.Equal(t, 8, info.TaskRelayInfo.LogUsage.Other["video_requested_seconds"])
+	assert.Equal(t, "1080p", info.TaskRelayInfo.LogUsage.Other["video_resolution"])
+	assert.Equal(t, "16:9", info.TaskRelayInfo.LogUsage.Other["video_ratio"])
+}
+
+func TestExtractUsageFactsTokensFollowDurationAndTier(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       map[string]any
+		wantTokens float64
+	}{
+		{name: "5s at 480p", body: map[string]any{"resolution": "480p", "duration": float64(5)}, wantTokens: estimateTokens(5, "480p")},
+		{name: "10s at 1080p", body: map[string]any{"resolution": "1080p", "duration": float64(10)}, wantTokens: estimateTokens(10, "1080p")},
+		{name: "duration -1 reserves the longest clip", body: map[string]any{"resolution": "720p", "duration": float64(-1)}, wantTokens: estimateTokens(15, "720p")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			info := &relaycommon.RelayInfo{
+				OriginModelName: "doubao-seedance-2-0",
+				TaskRelayInfo:   &relaycommon.TaskRelayInfo{Action: "GENERATE"},
+			}
+			facts, err := (&Adaptor{requestBody: tc.body}).ExtractUsageFactsValidated(newTestContext(t, tc.body), info)
+			require.NoError(t, err)
+			assert.InDelta(t, tc.wantTokens, facts["tokens"], 1e-9)
+		})
+	}
+}
+
+func TestExtractUsageFactsWithoutTaskRelayInfo(t *testing.T) {
+	body := map[string]any{"resolution": "720p"}
+	info := &relaycommon.RelayInfo{OriginModelName: "doubao-seedance-2-0"}
+	facts := (&Adaptor{requestBody: body}).ExtractUsageFacts(newTestContext(t, body), info)
+	assert.Equal(t, "720p", facts["resolution"])
+}
+
+func TestCompletionUsageFacts(t *testing.T) {
+	task := &model.Task{}
+	task.Properties.UpstreamModelName = "doubao-seedance-2-0"
+	task.Properties.OriginModelName = "doubao-seedance-2-0"
+
+	t.Run("tokens and a supported resolution", func(t *testing.T) {
+		facts := completionUsageFacts(task, pollData{TotalTokens: 50638, Resolution: "720P"})
+		assert.Equal(t, map[string]any{"tokens": float64(50638), "resolution": "720p"}, facts)
+	})
+
+	t.Run("a tier the model does not offer is dropped", func(t *testing.T) {
+		task := &model.Task{}
+		task.Properties.UpstreamModelName = "doubao-seedance-2-0-fast"
+		facts := completionUsageFacts(task, pollData{TotalTokens: 100, Resolution: "1080p"})
+		assert.Equal(t, map[string]any{"tokens": float64(100)}, facts)
+	})
+
+	t.Run("zero tokens are dropped so the estimate stands", func(t *testing.T) {
+		facts := completionUsageFacts(task, pollData{Resolution: "480p"})
+		assert.Equal(t, map[string]any{"resolution": "480p"}, facts)
+	})
+
+	t.Run("nothing usable returns nil", func(t *testing.T) {
+		assert.Nil(t, completionUsageFacts(task, pollData{Resolution: "8k"}))
+	})
+
+	t.Run("a nil task falls back to the shared profile", func(t *testing.T) {
+		facts := completionUsageFacts(nil, pollData{TotalTokens: 7, Resolution: "4k"})
+		assert.Equal(t, map[string]any{"tokens": float64(7), "resolution": "4k"}, facts)
+	})
+}
+
+func TestSettleOnCompleteSkipsTieredTasks(t *testing.T) {
+	task := &model.Task{Status: model.TaskStatusSuccess, Quota: 3000}
+	task.PrivateData.BillingContext = &model.TaskBillingContext{
+		ModelRatio:     2,
+		GroupRatio:     1.5,
+		TieredSnapshot: &billingexpr.BillingSnapshot{ExprString: `tier("base", u("tokens"))`},
+	}
+	quota, clamp, handled := (&Adaptor{}).SettleOnComplete(task, &relaycommon.TaskInfo{TotalTokens: 1000})
+	assert.False(t, handled, "the frozen expression owns settlement; claiming it would settle twice")
+	assert.Zero(t, quota)
+	assert.Nil(t, clamp)
+}
+
+func TestTaskSettlementLog(t *testing.T) {
+	task := &model.Task{SubmitTime: 1_700_000_000, FinishTime: 1_700_000_042}
+	task.Data = []byte(`{"status":"SUCCESS","duration":5,"resolution":"720p","ratio":"16:9","total_tokens":50638}`)
+
+	logUsage := (&Adaptor{}).TaskSettlementLog(task, &relaycommon.TaskInfo{TotalTokens: 50638})
+
+	assert.Equal(t, 50638, logUsage.CompletionTokens)
+	assert.Equal(t, 42, logUsage.UseTimeSeconds)
+	assert.Equal(t, true, logUsage.Other["is_task"])
+	assert.Equal(t, 42, logUsage.Other["video_generation_seconds"])
+	assert.Equal(t, 5, logUsage.Other["video_seconds"])
+	assert.Equal(t, "720p", logUsage.Other["video_resolution"])
+	assert.Equal(t, "16:9", logUsage.Other["video_ratio"])
+}
+
+func TestTaskSettlementLogClampsAndOmits(t *testing.T) {
+	t.Run("an absent duration or unparseable snapshot is omitted", func(t *testing.T) {
+		task := &model.Task{SubmitTime: 10, FinishTime: 20, Data: []byte(`not json`)}
+		logUsage := (&Adaptor{}).TaskSettlementLog(task, nil)
+		assert.Zero(t, logUsage.CompletionTokens)
+		assert.Equal(t, 10, logUsage.UseTimeSeconds)
+		assert.NotContains(t, logUsage.Other, "video_seconds")
+		assert.NotContains(t, logUsage.Other, "video_resolution")
+	})
+
+	t.Run("a negative submission window is omitted", func(t *testing.T) {
+		task := &model.Task{SubmitTime: 20, FinishTime: 10, Data: []byte(`{"duration":5}`)}
+		logUsage := (&Adaptor{}).TaskSettlementLog(task, &relaycommon.TaskInfo{})
+		assert.Zero(t, logUsage.UseTimeSeconds)
+		assert.NotContains(t, logUsage.Other, "video_generation_seconds")
+	})
+
+	t.Run("an absurd duration is clamped away", func(t *testing.T) {
+		task := &model.Task{Data: []byte(`{"duration":99999}`)}
+		logUsage := (&Adaptor{}).TaskSettlementLog(task, nil)
+		assert.NotContains(t, logUsage.Other, "video_seconds")
+	})
+
+	t.Run("a nil task still reports the task marker", func(t *testing.T) {
+		logUsage := (&Adaptor{}).TaskSettlementLog(nil, nil)
+		assert.Equal(t, map[string]any{"is_task": true}, logUsage.Other)
+	})
+}
+
+func TestTokenCountDecoding(t *testing.T) {
+	for raw, want := range map[string]int{
+		`50638`: 50638, `50638.0`: 50638, `"50638"`: 50638, `" 12 "`: 12,
+		`-5`: 0, `"abc"`: 0, `1e20`: 0, `null`: 0, `true`: 0, `2147483648`: 0,
+	} {
+		var count tokenCount
+		require.NoError(t, common.Unmarshal([]byte(raw), &count), raw)
+		assert.Equal(t, want, count.Int(), raw)
+	}
+}
+
+func TestRegisteredUsageSchema(t *testing.T) {
+	for _, modelName := range ModelList {
+		t.Run(modelName, func(t *testing.T) {
+			schema, examples, native := taskusage.ForModel(modelName)
+			require.True(t, native, "the adaptor must declare a usage schema for %s", modelName)
+
+			// Keys mirror the doubao plugin's Seedance 2.0 profile so task
+			// expressions stay interchangeable between the two.
+			assert.Equal(t, []string{"resolution", "tokens", "video_input"}, sortedKeys(schema))
+			assert.Equal(t, "token", schema["tokens"].Unit)
+			assert.ElementsMatch(t, []string{"none", "video"}, schema["video_input"].Enum)
+			assert.ElementsMatch(t, seedanceResolutions[modelName], schema["resolution"].Enum)
+			assert.Equal(t, "计费 Token 单价", schema["tokens"].Description["zh"])
+			assert.Equal(t, "输出视频分辨率", schema["resolution"].Description["zh"])
+			assert.Equal(t, "参考视频输入", schema["video_input"].Description["zh"])
+
+			require.NotEmpty(t, examples)
+			for _, example := range examples {
+				assert.NotEmpty(t, example.Label)
+				assert.Contains(t, example.Facts, "tokens")
+				assert.Contains(t, example.Facts, "resolution")
+				assert.Contains(t, example.Facts, "video_input")
+			}
+		})
+	}
+}
+
+// sortedKeys keeps the assertion stable regardless of map iteration order.
+func sortedKeys(schema map[string]jsplugin.UsageFieldSchema) []string {
+	keys := make([]string, 0, len(schema))
+	for key := range schema {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
+}
+
+func TestUsageSchemaMutationsDoNotLeak(t *testing.T) {
+	schema, examples, native := taskusage.ForModel("doubao-seedance-2-0")
+	require.True(t, native)
+	require.NotEmpty(t, schema)
+
+	schema["tokens"] = jsplugin.UsageFieldSchema{Unit: "mutated"}
+	examples[0].Facts["tokens"] = "mutated"
+
+	fresh, freshExamples, _ := taskusage.ForModel("doubao-seedance-2-0")
+	assert.Equal(t, "token", fresh["tokens"].Unit)
+	assert.NotEqual(t, "mutated", freshExamples[0].Facts["tokens"])
 }
