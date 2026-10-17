@@ -889,6 +889,36 @@ func TestRegisteredUsageSchema(t *testing.T) {
 	}
 }
 
+// TestFutureSeedanceModelsAcceptTieredPricing pins the forward-compatibility
+// contract: the upstream keeps releasing Seedance members the adaptor cannot
+// list ahead of time, and a name without a usage schema cannot save a tiered
+// expression at all. A name in the declared family must therefore already be
+// priceable, and must bill on the whole tier range.
+func TestFutureSeedanceModelsAcceptTieredPricing(t *testing.T) {
+	for _, modelName := range []string{"doubao-seedance-3-0", "doubao-seedance-3-0-fast", "doubao-seedance-3-5"} {
+		t.Run(modelName, func(t *testing.T) {
+			schema, _, native := taskusage.ForModel(modelName)
+			require.True(t, native, "an undeclared family member must still resolve a usage schema")
+			assert.ElementsMatch(t, allSeedanceResolutions, schema["resolution"].Enum)
+			assert.NoError(t, billing_setting.SmokeTestTaskExpr(
+				`u("resolution") == "480p" && u("video_input") == "none" ? tier("480p·none", u("tokens") * 46 / 1000000) : tier("other", u("tokens") * 28 / 1000000)`,
+				schema))
+
+			// The submit-time facts must offer the same tiers the schema
+			// promises, or the expression could match no tier at all.
+			body := map[string]any{"duration": float64(5)}
+			info := &relaycommon.RelayInfo{OriginModelName: modelName, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+			facts, err := (&Adaptor{requestBody: body}).ExtractUsageFactsValidated(newTestContext(t, body), info)
+			require.NoError(t, err)
+			assert.Equal(t, "1080p", facts["resolution"])
+		})
+	}
+
+	// A declared member keeps its own narrower profile.
+	declared, _, _ := taskusage.ForModel("doubao-seedance-2-0-fast")
+	assert.ElementsMatch(t, []string{"480p", "720p"}, declared["resolution"].Enum)
+}
+
 // TestEveryModelAcceptsTieredPricing pins the regression behind the unusable
 // pricing editor entry: a model the channel exposes but the adaptor does not
 // declare has no usage schema, and saving any tiered expression for it fails

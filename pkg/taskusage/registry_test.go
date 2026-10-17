@@ -96,3 +96,75 @@ func keys(schema map[string]jsplugin.UsageFieldSchema) []string {
 	}
 	return result
 }
+
+func TestForModelFallsBackToTheLongestMatchingPrefix(t *testing.T) {
+	t.Cleanup(func() {
+		UnregisterPrefix("taskusage-family-", "taskusage-family-special-")
+		Unregister("taskusage-family-exact-model")
+	})
+
+	RegisterPrefix([]string{"taskusage-family-"}, map[string]jsplugin.UsageFieldSchema{
+		"tokens": {Type: "number", Unit: "token"},
+	}, []jsplugin.UsageExample{{Label: "family"}})
+	RegisterPrefix([]string{"taskusage-family-special-"}, map[string]jsplugin.UsageFieldSchema{
+		"clips": {Type: "number", Unit: "count"},
+	}, []jsplugin.UsageExample{{Label: "special"}})
+
+	// An exact registration wins over both prefixes, whatever their length.
+	Register([]string{"taskusage-family-exact-model"}, map[string]jsplugin.UsageFieldSchema{
+		"seconds": {Type: "number", Unit: "second"},
+	}, []jsplugin.UsageExample{{Label: "exact"}})
+
+	exact, exactExamples, ok := ForModel("taskusage-family-exact-model")
+	require.True(t, ok)
+	assert.Equal(t, []string{"seconds"}, keys(exact))
+	assert.Equal(t, "exact", exactExamples[0].Label)
+
+	special, specialExamples, ok := ForModel("taskusage-family-special-3-0")
+	require.True(t, ok)
+	assert.Equal(t, []string{"clips"}, keys(special))
+	assert.Equal(t, "special", specialExamples[0].Label)
+
+	family, _, ok := ForModel("taskusage-family-3-0")
+	require.True(t, ok)
+	assert.Equal(t, []string{"tokens"}, keys(family))
+
+	_, _, unknown := ForModel("taskusage-other-3-0")
+	assert.False(t, unknown)
+
+	_, _, blank := ForModel("")
+	assert.False(t, blank, "a blank name must not match a prefix")
+}
+
+func TestPrefixRegistrationsReturnIndependentCopies(t *testing.T) {
+	const model = "taskusage-copy-3-0"
+	t.Cleanup(func() { UnregisterPrefix("taskusage-copy-") })
+
+	RegisterPrefix([]string{"taskusage-copy-"}, map[string]jsplugin.UsageFieldSchema{
+		"tokens": {Type: "number", Unit: "token"},
+	}, []jsplugin.UsageExample{{Label: "5s", Facts: map[string]any{"tokens": 1}}})
+
+	schema, examples, ok := ForModel(model)
+	require.True(t, ok)
+	schema["tokens"] = jsplugin.UsageFieldSchema{Unit: "mutated"}
+	examples[0].Facts["tokens"] = "mutated"
+
+	fresh, freshExamples, _ := ForModel(model)
+	assert.Equal(t, "token", fresh["tokens"].Unit)
+	assert.Equal(t, 1, freshExamples[0].Facts["tokens"])
+}
+
+func TestUnregisterPrefixRemovesOnlyTheGivenPrefixes(t *testing.T) {
+	t.Cleanup(func() { UnregisterPrefix("taskusage-keep-", "taskusage-drop-") })
+
+	RegisterPrefix([]string{"taskusage-keep-", "taskusage-drop-"}, map[string]jsplugin.UsageFieldSchema{
+		"tokens": {Type: "number", Unit: "token"},
+	}, nil)
+
+	UnregisterPrefix("taskusage-drop-")
+
+	_, _, dropped := ForModel("taskusage-drop-3-0")
+	assert.False(t, dropped)
+	_, _, kept := ForModel("taskusage-keep-3-0")
+	assert.True(t, kept)
+}

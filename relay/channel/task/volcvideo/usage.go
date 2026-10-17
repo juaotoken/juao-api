@@ -33,11 +33,24 @@ var seedanceResolutions = map[string][]string{
 // endpoint ID): every Seedance tier is accepted.
 var allSeedanceResolutions = []string{"480p", "720p", "1080p", "4k"}
 
+// seedanceModelPrefixes are the model-name families whose members are not all
+// known in advance. The upstream keeps adding Seedance releases (3.0, 3.5, ...)
+// under the same wire protocol, and a model the registry does not cover gets no
+// usage schema, which makes its tiered pricing expression unsavable. Every name
+// in these families therefore falls back to the shared profile below; the three
+// declared models keep their narrower resolution lists through their exact
+// registrations, which win over the prefix. A member that prices audio
+// separately (Seedance 1.5 pro) still needs its own registration to expose a
+// `generate_audio` field.
+var seedanceModelPrefixes = []string{"doubao-seedance-"}
+
 func init() {
 	for _, name := range ModelList {
 		resolutions := seedanceResolutions[name]
 		taskusage.Register([]string{name}, seedanceUsageSchema(resolutions), seedanceUsageExamples(resolutions))
 	}
+	taskusage.RegisterPrefix(seedanceModelPrefixes,
+		seedanceUsageSchema(allSeedanceResolutions), seedanceUsageExamples(allSeedanceResolutions))
 }
 
 // seedanceUsageSchema mirrors the doubao plugin's seedanceUsageSchema for the
