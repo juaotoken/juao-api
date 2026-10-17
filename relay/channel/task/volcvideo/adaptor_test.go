@@ -18,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/pkg/taskusage"
 	"github.com/QuantumNous/new-api/plugins"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/billing_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
@@ -888,6 +889,30 @@ func TestRegisteredUsageSchema(t *testing.T) {
 	}
 }
 
+// TestEveryModelAcceptsTieredPricing pins the regression behind the unusable
+// pricing editor entry: a model the channel exposes but the adaptor does not
+// declare has no usage schema, and saving any tiered expression for it fails
+// with "expression references usage keys ... but the model has no task plugin
+// usage schema". The upstream serves Seedance under its suffix-free name, so
+// that exact name must be declared; every declared name must validate.
+func TestEveryModelAcceptsTieredPricing(t *testing.T) {
+	// The upstream's /v1/models returns Seedance without the Ark endpoint
+	// suffix the doubao plugin carries, so the channel exposes these names.
+	assert.Contains(t, ModelList, "doubao-seedance-2-5")
+	for _, modelName := range ModelList {
+		t.Run(modelName, func(t *testing.T) {
+			schema, _, native := taskusage.ForModel(modelName)
+			require.True(t, native, "no usage schema registered for %s", modelName)
+			for _, expression := range []string{
+				`tier("base", u("tokens") * 46 / 1000000)`,
+				`u("resolution") == "480p" && u("video_input") == "none" ? tier("480p·none", u("tokens") * 46 / 1000000) : tier("other", u("tokens") * 28 / 1000000)`,
+			} {
+				assert.NoError(t, billing_setting.SmokeTestTaskExpr(expression, schema), modelName)
+			}
+		})
+	}
+}
+
 // sortedKeys keeps the assertion stable regardless of map iteration order.
 func sortedKeys(schema map[string]jsplugin.UsageFieldSchema) []string {
 	keys := make([]string, 0, len(schema))
@@ -965,6 +990,7 @@ func TestDefaultResolutionMirrorsDoubaoPlugin(t *testing.T) {
 		"doubao-seedance-2-0":      "1080p",
 		"doubao-seedance-2-0-fast": "720p",
 		"doubao-seedance-2-0-mini": "720p",
+		"doubao-seedance-2-5":      "1080p",
 	} {
 		body := map[string]any{"duration": float64(5)}
 		info := &relaycommon.RelayInfo{

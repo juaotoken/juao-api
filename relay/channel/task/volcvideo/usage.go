@@ -16,13 +16,16 @@ import (
 )
 
 // seedanceResolutions lists the output resolution tiers each model offers,
-// matching the doubao task plugin's Seedance 2.0 capability profiles
-// (doubao-seedance-2-0-260128 / -fast-260128 / -mini-260615). All three accept
-// reference video input.
+// matching the doubao task plugin's Seedance capability profiles
+// (doubao-seedance-2-0-260128 / -fast-260128 / -mini-260615 / -2-5-260628).
+// Every model accepts reference video input. The upstream drops the Ark
+// endpoint suffix from the plugin's names, so each entry also covers the
+// suffix-free spelling the 500 channel exposes.
 var seedanceResolutions = map[string][]string{
 	"doubao-seedance-2-0":      {"480p", "720p", "1080p", "4k"},
 	"doubao-seedance-2-0-fast": {"480p", "720p"},
 	"doubao-seedance-2-0-mini": {"480p", "720p"},
+	"doubao-seedance-2-5":      {"480p", "720p", "1080p"},
 }
 
 // allSeedanceResolutions is the profile of an upstream model name this
